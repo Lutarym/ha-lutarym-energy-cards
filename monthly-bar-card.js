@@ -559,7 +559,36 @@ class MonthlyBarCard extends HTMLElement {
     });
   }
 
-  getCardSize() { return 4; }
+  // Dynamische Höhenschätzung statt fixem Wert — sonst passt die von Home
+  // Assistant reservierte Fläche in Masonry-/Sections-Dashboards nicht zur
+  // tatsächlich gerenderten Höhe (abhängig von Kartenbreite, Titel- und
+  // Beschriftungsgröße), was zu Überlappungen oder Lücken führt.
+  _estimatedPixelHeight() {
+    const px = this._width || 400;
+    const lp = this._layoutParams(px);
+    const titleFontSize = this._config?.titleFontSize || 14;
+
+    const headerH = 14 + titleFontSize * 1.3;  // Padding + Zeilenhöhe Titel
+    const totalsH = 32;                        // Zusammenfassungszeile
+    const chartPaddingH = 10;                   // .chart-wrap Padding oben/unten
+    const cardPaddingH = 4;                     // ha-card Innenabstand
+
+    return headerH + totalsH + lp.H + chartPaddingH + cardPaddingH;
+  }
+
+  getCardSize() {
+    return Math.max(1, Math.ceil(this._estimatedPixelHeight() / 50));
+  }
+
+  // Für die neueren "Sections"-Dashboards: Grid-Höhe in Reihen (1 Reihe ≈ 56px)
+  getGridOptions() {
+    const rows = Math.max(3, Math.ceil(this._estimatedPixelHeight() / 56));
+    return {
+      columns: 12,
+      rows,
+      min_rows: 3,
+    };
+  }
 }
 
 customElements.define('monthly-bar-card', MonthlyBarCard);
@@ -724,8 +753,10 @@ class MonthlyBarCardEditor extends HTMLElement {
   }
 
   // Kompaktes Zahlenfeld für Schriftgrößen (px). isAutoAllowed=true zeigt
-  // einen "Automatisch"-Button, der das Feld leert (=> responsive/Standardgröße).
-  _numberRow(labelText, hintText, field, value, min, max, isAutoAllowed) {
+  // einen "Automatisch"-Button, der das Feld leert. placeholderText wird
+  // angezeigt, wenn das Feld leer ist — macht sichtbar, welche
+  // Standard-Schriftgröße dann greift, statt dass das Feld einfach leer wirkt.
+  _numberRow(labelText, hintText, field, value, min, max, isAutoAllowed, placeholderText) {
     const wrap = document.createElement('div');
     wrap.className = 'editor-row';
 
@@ -741,6 +772,7 @@ class MonthlyBarCardEditor extends HTMLElement {
     input.className = 'number-input';
     input.min = min;
     input.max = max;
+    if (placeholderText != null) input.placeholder = placeholderText;
     if (value != null) input.value = value;
     input.addEventListener('input', ev => {
       const v = ev.target.value === '' ? null : Number(ev.target.value);
@@ -776,6 +808,14 @@ class MonthlyBarCardEditor extends HTMLElement {
       hint.textContent = hintText;
       wrap.appendChild(hint);
     }
+    return wrap;
+  }
+
+  // Zwei Formularzeilen nebeneinander statt untereinander anordnen
+  _sideBySide(...rows) {
+    const wrap = document.createElement('div');
+    wrap.className = 'row-pair';
+    rows.forEach(row => wrap.appendChild(row));
     return wrap;
   }
 
@@ -824,6 +864,14 @@ class MonthlyBarCardEditor extends HTMLElement {
           color: var(--primary-text-color);
           font-size: 14px;
         }
+        .row-pair {
+          display: flex;
+          gap: 16px;
+        }
+        .row-pair > .editor-row {
+          flex: 1;
+          min-width: 0;
+        }
       </style>
       <div class="editor-form"></div>
     `;
@@ -854,12 +902,21 @@ class MonthlyBarCardEditor extends HTMLElement {
       this._config.title,
     ));
 
-    form.appendChild(this._numberRow(
-      'Schriftgröße Titel',
-      'Standard: 14px',
-      'title_font_size',
-      this._config.title_font_size ?? 14,
-      8, 32, false,
+    form.appendChild(this._sideBySide(
+      this._numberRow(
+        'Schriftgröße Titel',
+        'Standard: 14px',
+        'title_font_size',
+        this._config.title_font_size,
+        8, 32, true, '14',
+      ),
+      this._numberRow(
+        'Schriftgröße Beschriftung',
+        'Monats-/Achsen-/Wertebeschriftung — Standard: automatisch',
+        'label_font_size',
+        this._config.label_font_size,
+        6, 20, true, 'auto',
+      ),
     ));
 
     form.appendChild(this._colorRow(
@@ -904,14 +961,6 @@ class MonthlyBarCardEditor extends HTMLElement {
       ] } },
       'appearance',
       this._config.appearance || 'auto',
-    ));
-
-    form.appendChild(this._numberRow(
-      'Schriftgröße Beschriftung',
-      'Monats-, Achsen- und Wertebeschriftung im Diagramm — Standard: automatisch (abhängig von Kartenbreite)',
-      'label_font_size',
-      this._config.label_font_size,
-      6, 20, true,
     ));
   }
 }
