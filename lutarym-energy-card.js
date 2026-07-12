@@ -1,11 +1,11 @@
 /**
- * monthly-bar-card.js
+ * lutarym-energy-card.js
  * Lovelace Custom Card — Monatliche Balkendiagramme (kombiniert)
  * Vereint: Autarkie, Stromverbrauch, PV Ertrag, Wallbox, Wärmepumpe, Klimaanlage
  * Aktuelles Jahr + Vorjahr als Vergleichsbalken
  *
  * YAML:
- *   type: custom:monthly-bar-card
+ *   type: custom:lutarym-energy-card
  *   card_type: energy      # autarkie | energy | pv | wallbox | wp | klima
  *   entity: sensor.xyz     # optional, überschreibt Preset-Default
  *   title: Mein Titel      # optional, überschreibt Preset-Default
@@ -16,7 +16,7 @@
  *   appearance: auto       # optional: auto | light | dark
  *   title_font_size: 14    # optional, Schriftgröße Titel in px (Standard: 14)
  *   label_font_size: 10    # optional, Schriftgröße Beschriftung im Diagramm in px (Standard: automatisch)
- *   years_back: 1           # optional: 1 | 2 | 3 — wie viele Jahre zusätzlich zum aktuellen Jahr (Standard: 1)
+ *   years_back: 1           # optional: 0 | 1 | 2 | 3 — zusätzliche Vorjahre, 0 = nur aktuelles Jahr (Standard: 1)
  *
  * Wird über die UI hinzugefügt ("Karte hinzufügen" → "Monthly Bar Card"),
  * kann der Typ + optionale Overrides bequem im visuellen Editor gewählt werden.
@@ -103,7 +103,7 @@ const CARD_TYPE_KEYS = Object.keys(PRESETS);
 
 // ── Haupt-Card ───────────────────────────────────────────────────────────
 
-class MonthlyBarCard extends HTMLElement {
+class LutarymEnergyCard extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: 'open' });
@@ -146,7 +146,8 @@ class MonthlyBarCard extends HTMLElement {
     const preset = PRESETS[cardType];
 
     const newEntity = config.entity ?? preset.entity;
-    const newYearsBack = Math.min(3, Math.max(1, Number(config.years_back) || 1));
+    const rawYearsBack = config.years_back != null ? Number(config.years_back) : 1;
+    const newYearsBack = Math.min(3, Math.max(0, rawYearsBack));
     const entityOrTypeChanged =
       !this._config ||
       this._config.card_type !== cardType ||
@@ -190,7 +191,7 @@ class MonthlyBarCard extends HTMLElement {
   }
 
   static getConfigElement() {
-    return document.createElement('monthly-bar-card-editor');
+    return document.createElement('lutarym-energy-card-editor');
   }
 
   static getStubConfig() {
@@ -221,6 +222,7 @@ class MonthlyBarCard extends HTMLElement {
             select: {
               mode: 'dropdown',
               options: [
+                { value: '0', label: 'Nur aktuelles Jahr (kein Vergleich)' },
                 { value: '1', label: '1 Jahr zurück (2 Jahre gesamt)' },
                 { value: '2', label: '2 Jahre zurück (3 Jahre gesamt)' },
                 { value: '3', label: '3 Jahre zurück (4 Jahre gesamt)' },
@@ -306,7 +308,7 @@ class MonthlyBarCard extends HTMLElement {
       this._seriesYears = years;
       this._seriesData  = results;
     } catch (err) {
-      console.error('[monthly-bar-card]', err);
+      console.error('[lutarym-energy-card]', err);
       this._error = err.message ?? 'Unbekannter Fehler';
     }
 
@@ -329,26 +331,39 @@ class MonthlyBarCard extends HTMLElement {
     let lp;
     if (px < 280) {
       lp = { H: 160, pad: { top: 18, right: 6, bottom: 24, left: 34 },
-             fMonth: 8, fAxis: 8, fVal: 0, monthStyle: 'initial', barRatio: 0.7 };
+             monthStyle: 'initial', barRatio: 0.7 };
     } else if (px < 420) {
       lp = { H: 185, pad: { top: 22, right: 8, bottom: 28, left: 42 },
-             fMonth: 9, fAxis: 9, fVal: 0, monthStyle: 'abbr', barRatio: 0.72 };
+             monthStyle: 'abbr', barRatio: 0.72 };
     } else if (px < 560) {
       lp = { H: 210, pad: { top: 24, right: 10, bottom: 30, left: 48 },
-             fMonth: 10, fAxis: 10, fVal: 8, monthStyle: 'abbr', barRatio: 0.74 };
+             monthStyle: 'abbr', barRatio: 0.74 };
     } else {
       lp = { H: 230, pad: { top: 28, right: 14, bottom: 34, left: 54 },
-             fMonth: 10, fAxis: 10, fVal: 9, monthStyle: 'abbr', barRatio: 0.76 };
+             monthStyle: 'abbr', barRatio: 0.76 };
     }
-
-    // Feste Beschriftungsgröße überschreibt die responsiven Standardwerte
-    // für Monats-, Achsen- und Wertebeschriftung (aktiviert Wertelabels auch
-    // bei schmalen Karten, statt sie dort auszublenden).
-    if (this._config.labelFontSize) {
-      lp = { ...lp, fMonth: this._config.labelFontSize, fAxis: this._config.labelFontSize, fVal: this._config.labelFontSize };
-    }
-
     return lp;
+  }
+
+  // Kontinuierliche Skalierung der Beschriftungsgröße anhand der tatsächlichen
+  // Kartenbreite UND -höhe (statt fester Stufen) — Text wächst/schrumpft so
+  // flüssig mit, wenn die Karte größer oder kleiner gezogen wird. Eine manuell
+  // gesetzte Beschriftungsgröße (label_font_size) überschreibt das weiterhin fest.
+  _labelFontSizes(px, H, defaultH) {
+    if (this._config.labelFontSize) {
+      const f = this._config.labelFontSize;
+      return { fMonth: f, fAxis: f, fVal: f };
+    }
+
+    const widthScale  = px / 400;
+    const heightScale = H / defaultH;
+    const scale = Math.min(Math.max(Math.sqrt(widthScale * heightScale), 0.6), 2.2);
+
+    const fMonth = Math.round(9 * scale);
+    const fAxis  = Math.round(9 * scale);
+    const fVal   = px < 240 ? 0 : Math.round(8 * scale);
+
+    return { fMonth, fAxis, fVal };
   }
 
   // Höhe von Titel + Summary-Zeile + Chart-Padding — alles außer dem
@@ -408,8 +423,9 @@ class MonthlyBarCard extends HTMLElement {
 
     const px = this._width || 400;
     const lp = this._layoutParams(px);
-    const { pad, fMonth, fAxis, fVal, monthStyle, barRatio } = lp;
+    const { pad, monthStyle, barRatio } = lp;
     const H = this._effectiveChartHeight(lp.H, px);
+    const { fMonth, fAxis, fVal } = this._labelFontSizes(px, H, lp.H);
 
     const W     = px;
     const plotW = W - pad.left - pad.right;
@@ -682,7 +698,7 @@ class MonthlyBarCard extends HTMLElement {
   }
 }
 
-customElements.define('monthly-bar-card', MonthlyBarCard);
+customElements.define('lutarym-energy-card', LutarymEnergyCard);
 
 // ── Visueller Config-Editor ──────────────────────────────────────────────
 // Nutzt native HA-Formularelemente (<ha-selector>), damit die Eingabemaske
@@ -690,7 +706,7 @@ customElements.define('monthly-bar-card', MonthlyBarCard);
 // Kartentyp, durchsuchbarer Entity-Picker, Text- und Farbfelder.
 // Es muss NICHTS per YAML eingetragen werden — alles läuft über diese GUI.
 
-class MonthlyBarCardEditor extends HTMLElement {
+class LutarymEnergyCardEditor extends HTMLElement {
   setConfig(config) {
     // WICHTIG: setConfig wird von Home Assistant auch dann erneut aufgerufen,
     // wenn WIR SELBST gerade config-changed gefeuert haben (z.B. bei jedem
@@ -730,7 +746,7 @@ class MonthlyBarCardEditor extends HTMLElement {
 
   _onTypeChange(value) {
     // Nur die Preset-Overrides zurücksetzen, damit die Presets des neuen Typs
-    // greifen. Das äußere "type"-Feld (custom:monthly-bar-card) und alle
+    // greifen. Das äußere "type"-Feld (custom:lutarym-energy-card) und alle
     // sonstigen von Home Assistant verwalteten Schlüssel (z.B. grid_options)
     // MÜSSEN erhalten bleiben — sonst erkennt HA die Karte nicht mehr und
     // fällt auf den rohen YAML-Editor zurück.
@@ -763,21 +779,42 @@ class MonthlyBarCardEditor extends HTMLElement {
     label.textContent = labelText;
     wrap.appendChild(label);
 
-    const selector = document.createElement('ha-selector');
-    selector.hass = this._hass;
-    selector.selector = selectorObj;
-    selector.value = value ?? '';
-
-    selector.addEventListener('value-changed', ev => {
-      ev.stopPropagation();
-      const newVal = ev.detail.value;
-      if (field === 'card_type') {
-        this._onTypeChange(newVal);
-      } else {
+    let control;
+    if (selectorObj.select) {
+      // Natives <select> statt <ha-selector> für Dropdowns: ha-selector wird
+      // von Home Assistant asynchron nachgeladen — wird der Editor sehr früh
+      // erzeugt (bevor die Komponente registriert ist), gehen Klicks/Werte
+      // gelegentlich verloren ("Dropdown reagiert falsch"). Natives <select>
+      // funktioniert immer zuverlässig, unabhängig vom Ladezeitpunkt.
+      control = document.createElement('select');
+      control.className = 'native-select';
+      (selectorObj.select.options || []).forEach(opt => {
+        const optionEl = document.createElement('option');
+        optionEl.value = opt.value;
+        optionEl.textContent = opt.label;
+        if (String(opt.value) === String(value)) optionEl.selected = true;
+        control.appendChild(optionEl);
+      });
+      control.addEventListener('change', ev => {
+        const newVal = ev.target.value;
+        if (field === 'card_type') {
+          this._onTypeChange(newVal);
+        } else {
+          this._onFieldChange(field, newVal);
+        }
+      });
+    } else {
+      control = document.createElement('ha-selector');
+      control.hass = this._hass;
+      control.selector = selectorObj;
+      control.value = value ?? '';
+      control.addEventListener('value-changed', ev => {
+        ev.stopPropagation();
+        const newVal = ev.detail.value;
         this._onFieldChange(field, newVal);
-      }
-    });
-    wrap.appendChild(selector);
+      });
+    }
+    wrap.appendChild(control);
 
     if (hintText) {
       const hint = document.createElement('div');
@@ -955,6 +992,17 @@ class MonthlyBarCardEditor extends HTMLElement {
           color: var(--primary-text-color);
           font-size: 14px;
         }
+        .native-select {
+          width: 100%;
+          padding: 8px 10px;
+          border: 1px solid var(--divider-color, #ccc);
+          border-radius: 6px;
+          background: var(--card-background-color, #fff);
+          color: var(--primary-text-color);
+          font-size: 14px;
+          box-sizing: border-box;
+          cursor: pointer;
+        }
         .row-pair {
           display: flex;
           gap: 16px;
@@ -1024,12 +1072,13 @@ class MonthlyBarCardEditor extends HTMLElement {
       'Jahre zurück',
       'Wie viele vergangene Jahre zusätzlich zum aktuellen Jahr angezeigt werden',
       { select: { mode: 'dropdown', options: [
+        { value: '0', label: 'Nur aktuelles Jahr (kein Vergleich)' },
         { value: '1', label: '1 Jahr zurück (2 Jahre gesamt)' },
         { value: '2', label: '2 Jahre zurück (3 Jahre gesamt)' },
         { value: '3', label: '3 Jahre zurück (4 Jahre gesamt)' },
       ] } },
       'years_back',
-      String(this._config.years_back || 1),
+      String(this._config.years_back ?? 1),
     ));
 
     const sectionLabel = document.createElement('div');
@@ -1042,7 +1091,7 @@ class MonthlyBarCardEditor extends HTMLElement {
     // natives <input type="color"> keine Transparenz darstellen kann — sonst
     // wirkt der Standard-Vorschauwert wie die normale Hauptfarbe und nicht
     // wie der tatsächlich im Chart genutzte, abgeschwächte Farbton.
-    const effectiveDim = this._config.color_dim ?? MonthlyBarCard.blendWithWhite(effectiveColor, 0x55 / 255);
+    const effectiveDim = this._config.color_dim ?? LutarymEnergyCard.blendWithWhite(effectiveColor, 0x55 / 255);
 
     form.appendChild(this._sideBySide(
       this._colorRow(
@@ -1092,13 +1141,13 @@ class MonthlyBarCardEditor extends HTMLElement {
   }
 }
 
-customElements.define('monthly-bar-card-editor', MonthlyBarCardEditor);
+customElements.define('lutarym-energy-card-editor', LutarymEnergyCardEditor);
 
 // ── Registrierung bei HACS / "Karte hinzufügen"-Dialog ──────────────────
 
 window.customCards = window.customCards || [];
 window.customCards.push({
-  type: 'monthly-bar-card',
-  name: 'Monthly Bar Card',
-  description: 'Monatliches Balkendiagramm (Autarkie, Stromverbrauch, PV, Wallbox, Wärmepumpe, Klimaanlage) — aktuelles Jahr vs. Vorjahr.',
+  type: 'lutarym-energy-card',
+  name: 'Energy Card by Lutarym',
+  description: 'Monatliches Balkendiagramm (Autarkie, Stromverbrauch, PV, Wallbox, Wärmepumpe, Klimaanlage) — aktuelles Jahr vs. Vorjahre.',
 });

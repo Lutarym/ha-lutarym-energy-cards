@@ -1,7 +1,7 @@
-# Lutarym Energy Cards
+# Energy Card by Lutarym
 
 Lovelace Custom Card für Home Assistant — monatliche Balkendiagramme
-(aktuelles Jahr vs. Vorjahr) für:
+(aktuelles Jahr vs. Vorjahre) für:
 
 - Autarkie
 - Stromverbrauch
@@ -10,7 +10,7 @@ Lovelace Custom Card für Home Assistant — monatliche Balkendiagramme
 - Wärmepumpe
 - Klimaanlage
 
-Eine einzige Card (`monthly-bar-card`), der Typ wird über eine grafische
+Eine einzige Card (`lutarym-energy-card`), der Typ wird über eine grafische
 Konfigurationsmaske ausgewählt — kein manuelles YAML nötig.
 
 ## Installation über HACS
@@ -23,12 +23,12 @@ Konfigurationsmaske ausgewählt — kein manuelles YAML nötig.
 
 ## Manuelle Installation (ohne HACS)
 
-1. `monthly-bar-card.js` nach `config/www/` kopieren
+1. `lutarym-energy-card.js` nach `config/www/` kopieren
 2. In den Dashboard-Ressourcen eintragen:
 
    ```yaml
    resources:
-     - url: /local/monthly-bar-card.js
+     - url: /local/lutarym-energy-card.js
        type: module
    ```
 
@@ -42,7 +42,7 @@ Presets).
 Alternativ per YAML:
 
 ```yaml
-type: custom:monthly-bar-card
+type: custom:lutarym-energy-card
 card_type: pv           # autarkie | energy | pv | wallbox | wp | klima
 years_back: 2            # optional: 1 | 2 | 3 — zusätzliche Vorjahre (Standard: 1)
 color: "#f59e0b"        # optional, Hauptfarbe aktuelles Jahr
@@ -55,11 +55,11 @@ appearance: auto        # optional: auto | light | dark
 ## Mehrjahresvergleich
 
 Mit `years_back` lässt sich einstellen, wie viele zusätzliche Vorjahre neben
-dem aktuellen Jahr als Balken angezeigt werden (1 bis 3, Standard: 1 —
-entspricht dem bisherigen Verhalten mit genau einem Vorjahr). Das
-unmittelbare Vorjahr nutzt `color_prev` in voller Deckkraft, weiter
-zurückliegende Jahre werden automatisch zunehmend blasser dargestellt, um
-optisch zwischen den Jahren zu unterscheiden.
+dem aktuellen Jahr als Balken angezeigt werden (0 bis 3, Standard: 1). Bei
+`0` wird ausschließlich das aktuelle Jahr angezeigt, ganz ohne
+Vergleichsbalken. Das unmittelbare Vorjahr nutzt `color_prev` in voller
+Deckkraft, weiter zurückliegende Jahre werden automatisch zunehmend blasser
+dargestellt, um optisch zwischen den Jahren zu unterscheiden.
 
 ## Darstellung (Hell/Dunkel)
 
