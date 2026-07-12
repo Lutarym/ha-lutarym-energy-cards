@@ -112,6 +112,7 @@ class MonthlyBarCard extends HTMLElement {
     this._error     = null;
     this._lastFetch = 0;
     this._width     = 0;
+    this._height    = 0;
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────
@@ -120,8 +121,12 @@ class MonthlyBarCard extends HTMLElement {
     this._ro = new ResizeObserver(entries => {
       for (const entry of entries) {
         const w = entry.contentRect.width;
-        if (Math.abs(w - this._width) > 4) {
-          this._width = w;
+        const h = entry.contentRect.height;
+        const widthChanged  = Math.abs(w - this._width) > 4;
+        const heightChanged = Math.abs(h - this._height) > 4;
+        if (widthChanged || heightChanged) {
+          this._width  = w;
+          this._height = h;
           this._render();
         }
       }
@@ -325,6 +330,31 @@ class MonthlyBarCard extends HTMLElement {
     return lp;
   }
 
+  // Höhe von Titel + Summary-Zeile + Chart-Padding — alles außer dem
+  // eigentlichen Diagramm. Wird gebraucht, um zu wissen, wie viel von der
+  // insgesamt verfügbaren Kartenhöhe für das Diagramm selbst übrig bleibt.
+  _nonChartOverhead(px) {
+    const titleFontSize = this._config.titleFontSize || 14;
+    const headerH = 14 + titleFontSize * 1.3 + 2; // Padding-top + Zeilenhöhe + Padding-bottom
+    const showTotal = px === 0 || px >= 280;
+    const totalsH = showTotal ? 32 : 0;
+    const chartPaddingBottom = 10;
+    return headerH + totalsH + chartPaddingBottom;
+  }
+
+  // Tatsächliche Chart-Höhe: folgt der vom ResizeObserver gemessenen Karten-
+  // höhe (this._height), sobald diese bekannt ist — z.B. wenn die Karte in
+  // einem Sections-/Grid-Dashboard höher oder niedriger gezogen wird. Ohne
+  // bekannte/externe Höhe (klassisches Masonry-Dashboard) wird weiterhin der
+  // responsive Breakpoint-Standardwert verwendet.
+  _effectiveChartHeight(defaultH, px) {
+    if (!this._height) return defaultH;
+    const overhead = this._nonChartOverhead(px);
+    const available = this._height - overhead;
+    const MIN_CHART_H = 100;
+    return Math.max(MIN_CHART_H, Math.round(available));
+  }
+
   // ── SVG-Chart ─────────────────────────────────────────────────────────
 
   _buildChart(currentMonth) {
@@ -333,7 +363,8 @@ class MonthlyBarCard extends HTMLElement {
 
     const px = this._width || 400;
     const lp = this._layoutParams(px);
-    const { H, pad, fMonth, fAxis, fVal, monthStyle, barRatio } = lp;
+    const { pad, fMonth, fAxis, fVal, monthStyle, barRatio } = lp;
+    const H = this._effectiveChartHeight(lp.H, px);
 
     const W     = px;
     const plotW = W - pad.left - pad.right;
@@ -429,7 +460,7 @@ class MonthlyBarCard extends HTMLElement {
       <line x1="${pad.left}" y1="${pad.top + plotH}" x2="${pad.left + plotW}" y2="${pad.top + plotH}" stroke="var(--secondary-text-color)" stroke-width="1"/>
     `;
 
-    return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block;">
+    return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:${H}px;display:block;">
       ${grid}${bars}${valLabels}${xLabels}${yLabels}${unitLabel}${axes}${legend}
     </svg>`;
   }
@@ -512,18 +543,26 @@ class MonthlyBarCard extends HTMLElement {
         :host {
           display: block;
           width: 100%;
+          height: 100%;
           box-sizing: border-box;
           --color-prev: ${this._config.colorPrev};
           --color-cur: ${this._config.color};
           ${this._appearanceCSSVars()}
         }
-        ha-card { width: 100%; }
+        ha-card {
+          width: 100%;
+          height: 100%;
+          display: flex;
+          flex-direction: column;
+          box-sizing: border-box;
+        }
         .card-header {
           padding: 14px 14px 2px;
           font-size: ${this._config.titleFontSize}px;
           font-weight: 600;
           letter-spacing: 0.02em;
           color: var(--primary-text-color);
+          flex-shrink: 0;
         }
         .totals {
           display: flex;
@@ -531,10 +570,15 @@ class MonthlyBarCard extends HTMLElement {
           padding: 6px 14px 8px;
           font-size: 12px;
           color: var(--secondary-text-color);
+          flex-shrink: 0;
         }
         .tot-item { display: flex; align-items: center; gap: 5px; }
         .dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; flex-shrink: 0; }
-        .chart-wrap { padding: 0 6px 10px; }
+        .chart-wrap {
+          padding: 0 6px 10px;
+          flex: 1 1 auto;
+          min-height: 0;
+        }
         .loading {
           padding: 28px 14px;
           text-align: center;
@@ -566,14 +610,7 @@ class MonthlyBarCard extends HTMLElement {
   _estimatedPixelHeight() {
     const px = this._width || 400;
     const lp = this._layoutParams(px);
-    const titleFontSize = this._config?.titleFontSize || 14;
-
-    const headerH = 14 + titleFontSize * 1.3;  // Padding + Zeilenhöhe Titel
-    const totalsH = 32;                        // Zusammenfassungszeile
-    const chartPaddingH = 10;                   // .chart-wrap Padding oben/unten
-    const cardPaddingH = 4;                     // ha-card Innenabstand
-
-    return headerH + totalsH + lp.H + chartPaddingH + cardPaddingH;
+    return this._nonChartOverhead(px) + lp.H;
   }
 
   getCardSize() {
