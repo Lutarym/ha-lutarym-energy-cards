@@ -9,7 +9,8 @@
  *   card_type: energy      # autarkie | energy | pv | wallbox | wp | klima
  *   entity: sensor.xyz     # optional, überschreibt Preset-Default
  *   title: Mein Titel      # optional, überschreibt Preset-Default
- *   color: "#00b4d8"       # optional, überschreibt Preset-Default
+ *   color: "#00b4d8"       # optional, überschreibt Preset-Default (aktuelles Jahr)
+ *   color_prev: "#888888"  # optional, überschreibt Preset-Default (Vorjahr)
  *
  * Wird über die UI hinzugefügt ("Karte hinzufügen" → "Monthly Bar Card"),
  * kann der Typ + optionale Overrides bequem im visuellen Editor gewählt werden.
@@ -23,6 +24,7 @@ const PRESETS = {
     entity:     'sensor.fronius_portal_autarkiegrad',
     title:      'Autarkie',
     color:      '#22c55e',
+    colorPrev:  '#888888',
     unit:       '%',
     statType:   'mean',      // 'mean' = Durchschnittswert je Monat (recorder mean)
     fixedMax:   100,         // Y-Achse fix 0–100 %
@@ -34,6 +36,7 @@ const PRESETS = {
     entity:     'sensor.haus_strom_energie',
     title:      'Stromverbrauch',
     color:      '#00b4d8',
+    colorPrev:  '#888888',
     unit:       'kWh',
     statType:   'change',
     fixedMax:   null,
@@ -45,6 +48,7 @@ const PRESETS = {
     entity:     'sensor.fronius_portal_pv_energie_gesamt',
     title:      'PV Ertrag',
     color:      '#f59e0b',
+    colorPrev:  '#888888',
     unit:       'kWh',
     statType:   'change',
     fixedMax:   null,
@@ -56,6 +60,7 @@ const PRESETS = {
     entity:     'sensor.wallbox_energie_gesamt',
     title:      'Wallbox Ladung',
     color:      '#3b82f6',
+    colorPrev:  '#888888',
     unit:       'kWh',
     statType:   'change',
     fixedMax:   null,
@@ -67,6 +72,7 @@ const PRESETS = {
     entity:     'sensor.warmepumpe_energie',
     title:      'Wärmepumpe',
     color:      '#ef4444',
+    colorPrev:  '#888888',
     unit:       'kWh',
     statType:   'change',
     fixedMax:   null,
@@ -78,6 +84,7 @@ const PRESETS = {
     entity:     'sensor.klimaanlage_energie',
     title:      'Klimaanlage',
     color:      '#06b6d4',
+    colorPrev:  '#888888',
     unit:       'kWh',
     statType:   'change',
     fixedMax:   null,
@@ -127,22 +134,32 @@ class MonthlyBarCard extends HTMLElement {
     const cardType = CARD_TYPE_KEYS.includes(config.card_type) ? config.card_type : 'energy';
     const preset = PRESETS[cardType];
 
+    const newEntity = config.entity ?? preset.entity;
+    const entityOrTypeChanged =
+      !this._config ||
+      this._config.card_type !== cardType ||
+      this._config.entity !== newEntity;
+
     this._config = {
-      card_type: cardType,
-      entity:    config.entity ?? preset.entity,
-      title:     config.title  ?? preset.title,
-      color:     config.color  ?? preset.color,
+      card_type:  cardType,
+      entity:     newEntity,
+      title:      config.title      ?? preset.title,
+      color:      config.color      ?? preset.color,
+      colorPrev:  config.color_prev ?? preset.colorPrev,
     };
     this._preset = preset;
 
-    // Bei Config-Wechsel Daten neu laden
-    this._lastFetch = 0;
-    this._data      = new Array(12).fill(null);
-    this._prevData  = new Array(12).fill(null);
-    this._loading   = true;
-    this._render();
+    if (entityOrTypeChanged) {
+      // Nur bei Typ- oder Entity-Wechsel Daten neu laden (nicht bei jedem
+      // Tastendruck in Titel/Farbe im Editor — vermeidet Preview-Flackern).
+      this._lastFetch = 0;
+      this._data      = new Array(12).fill(null);
+      this._prevData  = new Array(12).fill(null);
+      this._loading   = true;
+      if (this._hass) this._fetchData();
+    }
 
-    if (this._hass) this._fetchData();
+    this._render();
   }
 
   set hass(hass) {
@@ -180,12 +197,14 @@ class MonthlyBarCard extends HTMLElement {
         { name: 'entity', selector: { entity: {} } },
         { name: 'title', selector: { text: {} } },
         { name: 'color', selector: { text: { type: 'color' } } },
+        { name: 'color_prev', selector: { text: { type: 'color' } } },
       ],
       computeLabel: (schema) => ({
         card_type: 'Kartentyp',
         entity: 'Entity (optional, überschreibt Preset)',
         title: 'Titel (optional, überschreibt Preset)',
-        color: 'Farbe (optional, überschreibt Preset)',
+        color: 'Farbe aktuelles Jahr (optional, überschreibt Preset)',
+        color_prev: 'Farbe Vorjahr (optional, überschreibt Preset)',
       })[schema.name] ?? schema.name,
     };
   }
@@ -287,8 +306,8 @@ class MonthlyBarCard extends HTMLElement {
 
     const color        = this._config.color;
     const colorDim     = color + '55';
-    const colorPrev    = '#888888';
-    const colorPrevDim = '#88888844';
+    const colorPrev    = this._config.colorPrev;
+    const colorPrevDim = colorPrev + '44';
 
     // Max-Wert: fest (z.B. Autarkie 0–100%) oder dynamisch berechnet
     let maxVal;
@@ -428,7 +447,7 @@ class MonthlyBarCard extends HTMLElement {
           display: block;
           width: 100%;
           box-sizing: border-box;
-          --color-prev: #888888;
+          --color-prev: ${this._config.colorPrev};
           --color-cur: ${this._config.color};
         }
         ha-card { width: 100%; }
@@ -494,8 +513,21 @@ customElements.define('monthly-bar-card', MonthlyBarCard);
 
 class MonthlyBarCardEditor extends HTMLElement {
   setConfig(config) {
+    // WICHTIG: setConfig wird von Home Assistant auch dann erneut aufgerufen,
+    // wenn WIR SELBST gerade config-changed gefeuert haben (z.B. bei jedem
+    // Tastendruck in einem Textfeld). Würden wir hier jedes Mal das komplette
+    // Formular neu bauen (_render mit innerHTML), verliert das aktive Eingabe-
+    // feld bei jedem Buchstaben den Fokus/Cursor. Deshalb nur neu rendern,
+    // wenn es sich um den allerersten Aufruf handelt oder sich der Kartentyp
+    // von außen geändert hat (z.B. durch Undo oder manuelle YAML-Bearbeitung).
+    const firstLoad    = !this._config;
+    const typeChanged   = !firstLoad && config.card_type !== this._config.card_type;
+
     this._config = { ...config };
-    this._render();
+
+    if (firstLoad || typeChanged) {
+      this._render();
+    }
   }
 
   set hass(hass) {
@@ -518,8 +550,19 @@ class MonthlyBarCardEditor extends HTMLElement {
   }
 
   _onTypeChange(value) {
-    // Overrides zurücksetzen, damit die Presets des neuen Typs greifen.
-    this._config = { card_type: value };
+    // Nur die Preset-Overrides zurücksetzen, damit die Presets des neuen Typs
+    // greifen. Das äußere "type"-Feld (custom:monthly-bar-card) und alle
+    // sonstigen von Home Assistant verwalteten Schlüssel (z.B. grid_options)
+    // MÜSSEN erhalten bleiben — sonst erkennt HA die Karte nicht mehr und
+    // fällt auf den rohen YAML-Editor zurück.
+    const preserved = { ...this._config };
+    delete preserved.entity;
+    delete preserved.title;
+    delete preserved.color;
+    delete preserved.color_prev;
+    preserved.card_type = value;
+
+    this._config = preserved;
     this._render();
     this._fireChanged();
   }
@@ -607,11 +650,19 @@ class MonthlyBarCardEditor extends HTMLElement {
     ));
 
     form.appendChild(this._row(
-      'Farbe',
+      'Farbe (aktuelles Jahr)',
       `Optional — Standard: ${preset.color}`,
       { text: { type: 'color' } },
       'color',
       this._config.color,
+    ));
+
+    form.appendChild(this._row(
+      'Farbe (Vorjahr)',
+      `Optional — Standard: ${preset.colorPrev}`,
+      { text: { type: 'color' } },
+      'color_prev',
+      this._config.color_prev,
     ));
   }
 }
