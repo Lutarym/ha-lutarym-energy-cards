@@ -11,6 +11,9 @@
  *   title: Mein Titel      # optional, überschreibt Preset-Default
  *   color: "#00b4d8"       # optional, überschreibt Preset-Default (aktuelles Jahr)
  *   color_prev: "#888888"  # optional, überschreibt Preset-Default (Vorjahr)
+ *   color_text: "#1c1c1c"  # optional, Text-/Wertefarbe (Standard: folgt Theme)
+ *   color_dim: "#00b4d855" # optional, schwächerer Farbton (vergangene Monate, aktuelles Jahr)
+ *   appearance: auto       # optional: auto | light | dark
  *
  * Wird über die UI hinzugefügt ("Karte hinzufügen" → "Monthly Bar Card"),
  * kann der Typ + optionale Overrides bequem im visuellen Editor gewählt werden.
@@ -21,7 +24,7 @@
 const PRESETS = {
   autarkie: {
     label:      'Autarkie',
-    entity:     'sensor.fronius_portal_autarkiegrad',
+    entity:     'sensor.autarkie',
     title:      'Autarkie',
     color:      '#22c55e',
     colorPrev:  '#888888',
@@ -33,7 +36,7 @@ const PRESETS = {
   },
   energy: {
     label:      'Stromverbrauch',
-    entity:     'sensor.haus_strom_energie',
+    entity:     'sensor.stromverbrauch',
     title:      'Stromverbrauch',
     color:      '#00b4d8',
     colorPrev:  '#888888',
@@ -45,7 +48,7 @@ const PRESETS = {
   },
   pv: {
     label:      'PV Ertrag',
-    entity:     'sensor.fronius_portal_pv_energie_gesamt',
+    entity:     'sensor.pv_ertrag',
     title:      'PV Ertrag',
     color:      '#f59e0b',
     colorPrev:  '#888888',
@@ -56,9 +59,9 @@ const PRESETS = {
     valueSuffix: '',
   },
   wallbox: {
-    label:      'Wallbox Ladung',
-    entity:     'sensor.wallbox_energie_gesamt',
-    title:      'Wallbox Ladung',
+    label:      'Wallbox',
+    entity:     'sensor.wallbox',
+    title:      'Wallbox',
     color:      '#3b82f6',
     colorPrev:  '#888888',
     unit:       'kWh',
@@ -69,7 +72,7 @@ const PRESETS = {
   },
   wp: {
     label:      'Wärmepumpe',
-    entity:     'sensor.warmepumpe_energie',
+    entity:     'sensor.waermepumpe',
     title:      'Wärmepumpe',
     color:      '#ef4444',
     colorPrev:  '#888888',
@@ -81,7 +84,7 @@ const PRESETS = {
   },
   klima: {
     label:      'Klimaanlage',
-    entity:     'sensor.klimaanlage_energie',
+    entity:     'sensor.klimaanlage',
     title:      'Klimaanlage',
     color:      '#06b6d4',
     colorPrev:  '#888888',
@@ -146,6 +149,9 @@ class MonthlyBarCard extends HTMLElement {
       title:      config.title      ?? preset.title,
       color:      config.color      ?? preset.color,
       colorPrev:  config.color_prev ?? preset.colorPrev,
+      colorText:  config.color_text ?? null,   // null = folgt Theme (var(--primary-text-color))
+      colorDim:   config.color_dim  ?? null,   // null = automatisch abgeleiteter, schwächerer Farbton
+      appearance: config.appearance ?? 'auto', // 'auto' | 'light' | 'dark'
     };
     this._preset = preset;
 
@@ -198,6 +204,21 @@ class MonthlyBarCard extends HTMLElement {
         { name: 'title', selector: { text: {} } },
         { name: 'color', selector: { text: { type: 'color' } } },
         { name: 'color_prev', selector: { text: { type: 'color' } } },
+        { name: 'color_text', selector: { text: { type: 'color' } } },
+        { name: 'color_dim', selector: { text: { type: 'color' } } },
+        {
+          name: 'appearance',
+          selector: {
+            select: {
+              mode: 'dropdown',
+              options: [
+                { value: 'auto', label: 'Automatisch (Dashboard-Theme)' },
+                { value: 'light', label: 'Hell erzwingen' },
+                { value: 'dark', label: 'Dunkel erzwingen' },
+              ],
+            },
+          },
+        },
       ],
       computeLabel: (schema) => ({
         card_type: 'Kartentyp',
@@ -205,6 +226,9 @@ class MonthlyBarCard extends HTMLElement {
         title: 'Titel (optional, überschreibt Preset)',
         color: 'Farbe aktuelles Jahr (optional, überschreibt Preset)',
         color_prev: 'Farbe Vorjahr (optional, überschreibt Preset)',
+        color_text: 'Farbe Text/Werte (optional)',
+        color_dim: 'Farbe schwächerer Farbton (optional)',
+        appearance: 'Darstellung',
       })[schema.name] ?? schema.name,
     };
   }
@@ -305,9 +329,10 @@ class MonthlyBarCard extends HTMLElement {
     const pairOff = (slotW - pairW) / 2;
 
     const color        = this._config.color;
-    const colorDim     = color + '55';
+    const colorDim     = this._config.colorDim || (color + '55');
     const colorPrev    = this._config.colorPrev;
     const colorPrevDim = colorPrev + '44';
+    const colorText    = this._config.colorText || 'var(--primary-text-color)';
 
     // Max-Wert: fest (z.B. Autarkie 0–100%) oder dynamisch berechnet
     let maxVal;
@@ -355,7 +380,7 @@ class MonthlyBarCard extends HTMLElement {
         const fill = isCurrent ? color : colorDim;
         bars += `<rect x="${xCur.toFixed(1)}" y="${bY.toFixed(1)}" width="${barW.toFixed(1)}" height="${bH.toFixed(1)}" fill="${fill}" rx="2"/>`;
         if (fVal > 0 && valCur > 0) {
-          valLabels += `<text x="${(xCur + barW / 2).toFixed(1)}" y="${(bY - 3).toFixed(1)}" text-anchor="middle" font-size="${fVal}" fill="var(--primary-text-color)">${valCur.toFixed(0)}${this._preset.valueSuffix}</text>`;
+          valLabels += `<text x="${(xCur + barW / 2).toFixed(1)}" y="${(bY - 3).toFixed(1)}" text-anchor="middle" font-size="${fVal}" fill="${colorText}">${valCur.toFixed(0)}${this._preset.valueSuffix}</text>`;
         }
       } else if (isFuture) {
         bars += `<rect x="${xCur.toFixed(1)}" y="${(pad.top + plotH - 3).toFixed(1)}" width="${barW.toFixed(1)}" height="3" fill="var(--divider-color)" rx="1"/>`;
@@ -363,7 +388,7 @@ class MonthlyBarCard extends HTMLElement {
 
       const label  = monthStyle === 'initial' ? MONTHS_INITIAL[i] : MONTHS_ABBR[i];
       const weight = isCurrent ? 'bold' : 'normal';
-      const fcolor = isCurrent ? 'var(--primary-text-color)' : 'var(--secondary-text-color)';
+      const fcolor = isCurrent ? colorText : 'var(--secondary-text-color)';
       xLabels += `<text x="${cx.toFixed(1)}" y="${H - 5}" text-anchor="middle" font-size="${fMonth}" font-weight="${weight}" fill="${fcolor}">${label}</text>`;
     }
 
@@ -390,6 +415,30 @@ class MonthlyBarCard extends HTMLElement {
     return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block;">
       ${grid}${bars}${valLabels}${xLabels}${yLabels}${unitLabel}${axes}${legend}
     </svg>`;
+  }
+
+  // ── Darstellungsmodus (Automatisch folgt Dashboard-Theme via HA-CSS-Vars;
+  //    Hell/Dunkel erzwingen lokale Overrides nur für diese Card-Instanz) ──
+
+  _appearanceCSSVars() {
+    const mode = this._config.appearance || 'auto';
+    if (mode === 'light') {
+      return `
+        --primary-text-color: #1c1c1c;
+        --secondary-text-color: #6b7280;
+        --divider-color: #e0e0e0;
+        --card-background-color: #ffffff;
+      `;
+    }
+    if (mode === 'dark') {
+      return `
+        --primary-text-color: #e5e7eb;
+        --secondary-text-color: #9ca3af;
+        --divider-color: #3f3f46;
+        --card-background-color: #1e1e1e;
+      `;
+    }
+    return ''; // auto: nichts überschreiben, HA-Theme-Variablen greifen wie gewohnt
   }
 
   // ── Summary (Durchschnitt oder Summe je nach Preset) ─────────────────
@@ -449,6 +498,7 @@ class MonthlyBarCard extends HTMLElement {
           box-sizing: border-box;
           --color-prev: ${this._config.colorPrev};
           --color-cur: ${this._config.color};
+          ${this._appearanceCSSVars()}
         }
         ha-card { width: 100%; }
         .card-header {
@@ -609,6 +659,61 @@ class MonthlyBarCardEditor extends HTMLElement {
     return wrap;
   }
 
+  // Kompaktes, natives Farbfeld (<input type="color">) statt des sehr breiten
+  // ha-selector-Farbwählers. effectiveValue ist der tatsächlich wirksame Wert
+  // (Override, falls gesetzt, sonst Preset-Default) — damit die Voreinstellung
+  // im Feld angezeigt wird statt immer Schwarz. Ein "Zurücksetzen"-Button
+  // entfernt einen gesetzten Override wieder, sodass wieder der automatische
+  // Standard greift.
+  _colorRow(labelText, hintText, field, effectiveValue, isOverridden) {
+    const wrap = document.createElement('div');
+    wrap.className = 'editor-row';
+
+    const label = document.createElement('label');
+    label.textContent = labelText;
+    wrap.appendChild(label);
+
+    const controls = document.createElement('div');
+    controls.className = 'color-controls';
+
+    const input = document.createElement('input');
+    input.type = 'color';
+    input.className = 'color-input';
+    input.value = effectiveValue;
+    input.addEventListener('input', ev => {
+      this._onFieldChange(field, ev.target.value);
+      resetBtn.style.visibility = 'visible';
+    });
+    controls.appendChild(input);
+
+    const hexLabel = document.createElement('span');
+    hexLabel.className = 'color-hex';
+    hexLabel.textContent = effectiveValue;
+    input.addEventListener('input', ev => { hexLabel.textContent = ev.target.value; });
+    controls.appendChild(hexLabel);
+
+    const resetBtn = document.createElement('button');
+    resetBtn.type = 'button';
+    resetBtn.className = 'color-reset';
+    resetBtn.textContent = 'Zurücksetzen';
+    resetBtn.style.visibility = isOverridden ? 'visible' : 'hidden';
+    resetBtn.addEventListener('click', () => {
+      this._onFieldChange(field, null);
+      this._render();
+    });
+    controls.appendChild(resetBtn);
+
+    wrap.appendChild(controls);
+
+    if (hintText) {
+      const hint = document.createElement('div');
+      hint.className = 'hint';
+      hint.textContent = hintText;
+      wrap.appendChild(hint);
+    }
+    return wrap;
+  }
+
   _render() {
     if (!this._config) return;
     const preset = PRESETS[this._cardType];
@@ -619,6 +724,32 @@ class MonthlyBarCardEditor extends HTMLElement {
         .editor-row { display: flex; flex-direction: column; gap: 4px; }
         label { font-size: 13px; font-weight: 500; color: var(--primary-text-color); }
         .hint { font-size: 11px; color: var(--secondary-text-color); }
+        .color-controls { display: flex; align-items: center; gap: 8px; }
+        .color-input {
+          width: 40px;
+          height: 30px;
+          padding: 2px;
+          border: 1px solid var(--divider-color, #ccc);
+          border-radius: 6px;
+          cursor: pointer;
+          background: none;
+          flex-shrink: 0;
+        }
+        .color-hex {
+          font-size: 12px;
+          font-family: monospace;
+          color: var(--secondary-text-color);
+        }
+        .color-reset {
+          margin-left: auto;
+          font-size: 11px;
+          color: var(--primary-color, #03a9f4);
+          background: none;
+          border: none;
+          cursor: pointer;
+          padding: 4px 6px;
+        }
+        .color-reset:hover { text-decoration: underline; }
       </style>
       <div class="editor-form"></div>
     `;
@@ -649,20 +780,48 @@ class MonthlyBarCardEditor extends HTMLElement {
       this._config.title,
     ));
 
-    form.appendChild(this._row(
+    form.appendChild(this._colorRow(
       'Farbe (aktuelles Jahr)',
-      `Optional — Standard: ${preset.color}`,
-      { text: { type: 'color' } },
+      `Standard für "${preset.label}": ${preset.color}`,
       'color',
-      this._config.color,
+      this._config.color ?? preset.color,
+      this._config.color != null,
+    ));
+
+    form.appendChild(this._colorRow(
+      'Farbe (Vorjahr)',
+      `Standard: ${preset.colorPrev}`,
+      'color_prev',
+      this._config.color_prev ?? preset.colorPrev,
+      this._config.color_prev != null,
+    ));
+
+    form.appendChild(this._colorRow(
+      'Farbe (Text/Werte)',
+      'Standard: folgt automatisch dem Dashboard-Theme',
+      'color_text',
+      this._config.color_text ?? '#1c1c1c',
+      this._config.color_text != null,
+    ));
+
+    form.appendChild(this._colorRow(
+      'Farbe (schwächerer Farbton, aktuelles Jahr)',
+      'Für vergangene Monate des laufenden Jahres — Standard: automatisch aus Hauptfarbe abgeleitet',
+      'color_dim',
+      this._config.color_dim ?? (this._config.color ?? preset.color),
+      this._config.color_dim != null,
     ));
 
     form.appendChild(this._row(
-      'Farbe (Vorjahr)',
-      `Optional — Standard: ${preset.colorPrev}`,
-      { text: { type: 'color' } },
-      'color_prev',
-      this._config.color_prev,
+      'Darstellung',
+      'Automatisch folgt dem Dashboard-Theme; Hell/Dunkel erzwingt feste Farben nur für diese Karte',
+      { select: { mode: 'dropdown', options: [
+        { value: 'auto',  label: 'Automatisch (Dashboard-Theme)' },
+        { value: 'light', label: 'Hell erzwingen' },
+        { value: 'dark',  label: 'Dunkel erzwingen' },
+      ] } },
+      'appearance',
+      this._config.appearance || 'auto',
     ));
   }
 }
