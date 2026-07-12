@@ -2,68 +2,47 @@
 
 Sammlung eigener Lovelace Custom Cards für Home Assistant, rund um Energie-
 und Hausautomatisierungs-Dashboards. Fünf eigenständige Cards, jede mit
-eigenem Custom-Element-Typ:
+eigenem Custom-Element-Typ und eigenem visuellen Editor — gebündelt in
+**einer** Datei (`lutarym-ha-cards.js`), damit die Installation über HACS
+zuverlässig funktioniert (die HACS-Kategorie "Dashboard" ist strukturell auf
+eine Datei pro Repository ausgelegt; mehrere separate Dateien werden dort
+nicht zuverlässig automatisch mitgeladen):
 
-| Datei | Typ | Beschriftung in HA |
-|---|---|---|
-| `lutarym-energy-card.js` | `custom:lutarym-energy-card` | Energy Card by Lutarym |
-| `strom-uebersicht-card.js` | `custom:strom-uebersicht-card` | Strom-Übersicht by Lutarym |
-| `raum-energie-card.js` | `custom:raum-energie-card` | Raum-Energie by Lutarym |
-| `wallbox-card.js` | `custom:wallbox-card` | Wallbox by Lutarym |
-| `battery-card.js` | `custom:battery-card` | BYD Battery by Lutarym |
+| Typ | Beschriftung in HA |
+|---|---|
+| `custom:lutarym-energy-card` | Energy Card by Lutarym |
+| `custom:strom-uebersicht-card` | Strom-Übersicht by Lutarym |
+| `custom:raum-energie-card` | Raum-Energie by Lutarym |
+| `custom:wallbox-card` | Wallbox by Lutarym |
+| `custom:battery-card` | BYD Battery by Lutarym |
 
 Alle fünf Cards haben eine grafische Konfigurationsmaske (visueller Editor)
 — beim Hinzufügen über **Dashboard bearbeiten → Karte hinzufügen** öffnet
 sich direkt ein Formular, YAML ist nirgends nötig.
+
+Die einzelnen Quelldateien (`lutarym-energy-card.js`, `strom-uebersicht-card.js`
+usw.) liegen weiterhin separat im Repo zum Lesen/Bearbeiten — für die
+Auslieferung an Home Assistant zählt aber nur `lutarym-ha-cards.js`.
 
 ## Installation über HACS
 
 1. HACS → **Frontend** → **⋮** (oben rechts) → **Benutzerdefinierte Repositories**
 2. Repository-URL: `https://github.com/<dein-github-name>/ha-lutarym-energy-cards`
    Kategorie: **Dashboard**
-3. Nach dem Hinzufügen: "Lutarym HA Cards" installieren — das lädt **alle**
-   fünf `.js`-Dateien herunter
+3. Nach dem Hinzufügen: "Lutarym HA Cards" installieren — lädt genau eine
+   Datei (`lutarym-ha-cards.js`), die automatisch als Ressource eingetragen wird
 4. HA neu laden (Browser-Cache ggf. leeren)
 
-**Wichtig:** HACS trägt automatisch nur die Hauptdatei
-(`lutarym-energy-card.js`) als Dashboard-Ressource ein. Die vier anderen
-Cards musst du danach einmalig manuell als weitere Ressourcen eintragen:
-
-**Einstellungen → Dashboards → Ressourcen (⋮ oben rechts) → Ressource hinzufügen:**
-
-```yaml
-resources:
-  - url: /local/community/ha-lutarym-energy-cards/lutarym-energy-card.js
-    type: module
-  - url: /local/community/ha-lutarym-energy-cards/strom-uebersicht-card.js
-    type: module
-  - url: /local/community/ha-lutarym-energy-cards/raum-energie-card.js
-    type: module
-  - url: /local/community/ha-lutarym-energy-cards/wallbox-card.js
-    type: module
-  - url: /local/community/ha-lutarym-energy-cards/battery-card.js
-    type: module
-```
-
-(Pfad kann je nach HACS-Version leicht abweichen — im Zweifel im
-Datei-Editor unter `config/www/community/ha-lutarym-energy-cards/` nachsehen.)
+Das war's — keine weiteren manuellen Ressourcen-Einträge nötig, alle fünf
+Cards stehen danach im "Karte hinzufügen"-Dialog zur Verfügung.
 
 ## Manuelle Installation (ohne HACS)
 
-Alle gewünschten `.js`-Dateien nach `config/www/` kopieren und einzeln in
-den Dashboard-Ressourcen eintragen:
+`lutarym-ha-cards.js` nach `config/www/` kopieren und eintragen:
 
 ```yaml
 resources:
-  - url: /local/lutarym-energy-card.js
-    type: module
-  - url: /local/strom-uebersicht-card.js
-    type: module
-  - url: /local/raum-energie-card.js
-    type: module
-  - url: /local/wallbox-card.js
-    type: module
-  - url: /local/battery-card.js
+  - url: /local/lutarym-ha-cards.js
     type: module
 ```
 
