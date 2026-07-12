@@ -16,6 +16,7 @@
  *   appearance: auto       # optional: auto | light | dark
  *   title_font_size: 14    # optional, Schriftgröße Titel in px (Standard: 14)
  *   label_font_size: 10    # optional, Schriftgröße Beschriftung im Diagramm in px (Standard: automatisch)
+ *   years_back: 1           # optional: 1 | 2 | 3 — wie viele Jahre zusätzlich zum aktuellen Jahr (Standard: 1)
  *
  * Wird über die UI hinzugefügt ("Karte hinzufügen" → "Monthly Bar Card"),
  * kann der Typ + optionale Overrides bequem im visuellen Editor gewählt werden.
@@ -106,8 +107,8 @@ class MonthlyBarCard extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: 'open' });
-    this._data      = new Array(12).fill(null);
-    this._prevData  = new Array(12).fill(null);
+    this._seriesYears = [];   // Jahre, älteste zuerst, letztes = aktuelles Jahr
+    this._seriesData  = [];   // je Jahr: Array[12] mit Monatswerten
     this._loading   = true;
     this._error     = null;
     this._lastFetch = 0;
@@ -145,10 +146,12 @@ class MonthlyBarCard extends HTMLElement {
     const preset = PRESETS[cardType];
 
     const newEntity = config.entity ?? preset.entity;
+    const newYearsBack = Math.min(3, Math.max(1, Number(config.years_back) || 1));
     const entityOrTypeChanged =
       !this._config ||
       this._config.card_type !== cardType ||
-      this._config.entity !== newEntity;
+      this._config.entity !== newEntity ||
+      this._config.yearsBack !== newYearsBack;
 
     this._config = {
       card_type:  cardType,
@@ -161,15 +164,16 @@ class MonthlyBarCard extends HTMLElement {
       appearance: config.appearance ?? 'auto', // 'auto' | 'light' | 'dark'
       titleFontSize: Number(config.title_font_size) || 14,
       labelFontSize: config.label_font_size ? Number(config.label_font_size) : null, // null = automatisch (responsiv)
+      yearsBack:  newYearsBack, // 1-3, wie viele Jahre zusätzlich zum aktuellen Jahr angezeigt werden
     };
     this._preset = preset;
 
     if (entityOrTypeChanged) {
-      // Nur bei Typ- oder Entity-Wechsel Daten neu laden (nicht bei jedem
-      // Tastendruck in Titel/Farbe im Editor — vermeidet Preview-Flackern).
+      // Nur bei Typ-, Entity- oder Jahres-Wechsel Daten neu laden (nicht bei
+      // jedem Tastendruck in Titel/Farbe im Editor — vermeidet Preview-Flackern).
       this._lastFetch = 0;
-      this._data      = new Array(12).fill(null);
-      this._prevData  = new Array(12).fill(null);
+      this._seriesYears = [];
+      this._seriesData  = [];
       this._loading   = true;
       if (this._hass) this._fetchData();
     }
@@ -211,6 +215,19 @@ class MonthlyBarCard extends HTMLElement {
         },
         { name: 'entity', selector: { entity: {} } },
         { name: 'title', selector: { text: {} } },
+        {
+          name: 'years_back',
+          selector: {
+            select: {
+              mode: 'dropdown',
+              options: [
+                { value: '1', label: '1 Jahr zurück (2 Jahre gesamt)' },
+                { value: '2', label: '2 Jahre zurück (3 Jahre gesamt)' },
+                { value: '3', label: '3 Jahre zurück (4 Jahre gesamt)' },
+              ],
+            },
+          },
+        },
         { name: 'color', selector: { text: { type: 'color' } } },
         { name: 'color_prev', selector: { text: { type: 'color' } } },
         { name: 'color_text', selector: { text: { type: 'color' } } },
@@ -235,6 +252,7 @@ class MonthlyBarCard extends HTMLElement {
         card_type: 'Kartentyp',
         entity: 'Entity (optional, überschreibt Preset)',
         title: 'Titel (optional, überschreibt Preset)',
+        years_back: 'Jahre zurück',
         color: 'Farbe aktuelles Jahr (optional, überschreibt Preset)',
         color_prev: 'Farbe Vorjahr (optional, überschreibt Preset)',
         color_text: 'Farbe Text/Werte (optional)',
@@ -276,14 +294,17 @@ class MonthlyBarCard extends HTMLElement {
     this._error   = null;
     this._render();
 
-    const year = new Date().getFullYear();
+    const currentYear = new Date().getFullYear();
+    const yearsBack    = this._config.yearsBack;
+    // älteste zuerst, aktuelles Jahr zuletzt — so werden die Balken von
+    // links (ältestes Jahr) nach rechts (aktuelles Jahr) angeordnet.
+    const years = [];
+    for (let y = currentYear - yearsBack; y <= currentYear; y++) years.push(y);
+
     try {
-      const [cur, prev] = await Promise.all([
-        this._fetchYear(year),
-        this._fetchYear(year - 1),
-      ]);
-      this._data     = cur;
-      this._prevData = prev;
+      const results = await Promise.all(years.map(y => this._fetchYear(y)));
+      this._seriesYears = years;
+      this._seriesData  = results;
     } catch (err) {
       console.error('[monthly-bar-card]', err);
       this._error = err.message ?? 'Unbekannter Fehler';
@@ -355,6 +376,30 @@ class MonthlyBarCard extends HTMLElement {
     return Math.max(MIN_CHART_H, Math.round(available));
   }
 
+  // Farbe für eine Jahres-Serie: letzte Serie (aktuelles Jahr) nutzt "color",
+  // vorletzte (unmittelbares Vorjahr) nutzt "colorPrev" unverändert, weiter
+  // zurückliegende Jahre nutzen zunehmend transparentere Varianten von
+  // colorPrev, damit sie sich optisch klar vom Vorjahr abheben.
+  _seriesColor(index, total) {
+    const isCurrent = index === total - 1;
+    if (isCurrent) return this._config.color;
+    const distance = total - 1 - index; // 1 = unmittelbares Vorjahr, 2/3 = weiter zurück
+    const FADE = { 1: '', 2: 'aa', 3: '77' };
+    return this._config.colorPrev + (FADE[distance] ?? '77');
+  }
+
+  // Mischt eine Hex-Farbe mit Weiß, um eine blasse Vorschau-/Fallback-Variante
+  // zu erzeugen (z.B. für den "schwächerer Farbton"-Vorschauswatch im Editor,
+  // da <input type="color"> keine Transparenz darstellen kann).
+  static blendWithWhite(hex, alpha) {
+    const h = hex.replace('#', '');
+    const r = parseInt(h.substring(0, 2), 16);
+    const g = parseInt(h.substring(2, 4), 16);
+    const b = parseInt(h.substring(4, 6), 16);
+    const mix = c => Math.round(c * alpha + 255 * (1 - alpha));
+    return '#' + [mix(r), mix(g), mix(b)].map(v => v.toString(16).padStart(2, '0')).join('');
+  }
+
   // ── SVG-Chart ─────────────────────────────────────────────────────────
 
   _buildChart(currentMonth) {
@@ -371,23 +416,27 @@ class MonthlyBarCard extends HTMLElement {
     const plotH = H - pad.top - pad.bottom;
     const slotW = plotW / 12;
 
-    const gap    = slotW * 0.06;
-    const barW   = (slotW * barRatio - gap) / 2;
-    const pairW  = barW * 2 + gap;
-    const pairOff = (slotW - pairW) / 2;
+    const years  = this._seriesYears;
+    const series = this._seriesData;
+    const N      = Math.max(years.length, 1);
+    const lastIndex = N - 1; // Index des aktuellen Jahres (letzte Serie)
 
-    const color        = this._config.color;
-    const colorDim     = this._config.colorDim || (color + '55');
-    const colorPrev    = this._config.colorPrev;
-    const colorPrevDim = colorPrev + '44';
-    const colorText    = this._config.colorText || 'var(--primary-text-color)';
+    // N Balken pro Monat nebeneinander, mit kleinem Gap dazwischen
+    const gap      = slotW * (N > 2 ? 0.035 : 0.06);
+    const totalGap = gap * (N - 1);
+    const barW     = (slotW * barRatio - totalGap) / N;
+    const groupW   = barW * N + totalGap;
+    const groupOff = (slotW - groupW) / 2;
 
-    // Max-Wert: fest (z.B. Autarkie 0–100%) oder dynamisch berechnet
+    const colorDim  = this._config.colorDim || (this._config.color + '55');
+    const colorText = this._config.colorText || 'var(--primary-text-color)';
+
+    // Max-Wert: fest (z.B. Autarkie 0–100%) oder dynamisch über alle Serien
     let maxVal;
     if (this._preset.fixedMax != null) {
       maxVal = this._preset.fixedMax;
     } else {
-      const allVals = [...this._data, ...this._prevData].filter(v => v !== null && v >= 0);
+      const allVals = series.flat().filter(v => v !== null && v >= 0);
       maxVal = this._niceMax(allVals.length ? Math.max(...allVals) : 0);
     }
 
@@ -401,57 +450,63 @@ class MonthlyBarCard extends HTMLElement {
     }
 
     let bars = '', xLabels = '', valLabels = '';
-    for (let i = 0; i < 12; i++) {
-      const slotX   = pad.left + i * slotW + pairOff;
-      const cx      = pad.left + i * slotW + slotW / 2;
-      const valCur  = this._data[i];
-      const valPrev = this._prevData[i];
-      const isFuture  = i > currentMonth;
-      const isCurrent = i === currentMonth;
+    for (let m = 0; m < 12; m++) {
+      const cx = pad.left + m * slotW + slotW / 2;
+      const isFutureMonth = m > currentMonth; // nur relevant für aktuelles Jahr
 
-      // Vorjahr-Balken (links)
-      const xPrev = slotX;
-      if (valPrev !== null) {
-        const bH   = Math.max((valPrev / maxVal) * plotH, 1);
-        const bY   = pad.top + plotH - bH;
-        const fill = isFuture ? colorPrevDim : colorPrev;
-        bars += `<rect x="${xPrev.toFixed(1)}" y="${bY.toFixed(1)}" width="${barW.toFixed(1)}" height="${bH.toFixed(1)}" fill="${fill}" rx="2"/>`;
-      } else if (!isFuture) {
-        bars += `<rect x="${xPrev.toFixed(1)}" y="${(pad.top + plotH - 1).toFixed(1)}" width="${barW.toFixed(1)}" height="1" fill="var(--divider-color)" rx="1"/>`;
-      }
+      for (let s = 0; s < N; s++) {
+        const isCurrentSeries = s === lastIndex;
+        const val = series[s] ? series[s][m] : null;
+        const isFuture = isCurrentSeries && isFutureMonth;
+        const xBar = pad.left + m * slotW + groupOff + s * (barW + gap);
 
-      // Aktuelles Jahr-Balken (rechts)
-      const xCur = slotX + barW + gap;
-      if (!isFuture && valCur !== null) {
-        const bH   = Math.max((valCur / maxVal) * plotH, 1);
-        const bY   = pad.top + plotH - bH;
-        const fill = isCurrent ? color : colorDim;
-        bars += `<rect x="${xCur.toFixed(1)}" y="${bY.toFixed(1)}" width="${barW.toFixed(1)}" height="${bH.toFixed(1)}" fill="${fill}" rx="2"/>`;
-        if (fVal > 0 && valCur > 0) {
-          valLabels += `<text x="${(xCur + barW / 2).toFixed(1)}" y="${(bY - 3).toFixed(1)}" text-anchor="middle" font-size="${fVal}" fill="${colorText}">${valCur.toFixed(0)}${this._preset.valueSuffix}</text>`;
+        if (isFuture) {
+          bars += `<rect x="${xBar.toFixed(1)}" y="${(pad.top + plotH - 3).toFixed(1)}" width="${barW.toFixed(1)}" height="3" fill="var(--divider-color)" rx="1"/>`;
+          continue;
         }
-      } else if (isFuture) {
-        bars += `<rect x="${xCur.toFixed(1)}" y="${(pad.top + plotH - 3).toFixed(1)}" width="${barW.toFixed(1)}" height="3" fill="var(--divider-color)" rx="1"/>`;
+
+        if (val === null) {
+          bars += `<rect x="${xBar.toFixed(1)}" y="${(pad.top + plotH - 1).toFixed(1)}" width="${barW.toFixed(1)}" height="1" fill="var(--divider-color)" rx="1"/>`;
+          continue;
+        }
+
+        const bH = Math.max((val / maxVal) * plotH, 1);
+        const bY = pad.top + plotH - bH;
+        const isCurrentMonthOfCurrentSeries = isCurrentSeries && m === currentMonth;
+        const fill = isCurrentSeries
+          ? (isCurrentMonthOfCurrentSeries ? this._config.color : colorDim)
+          : this._seriesColor(s, N);
+        bars += `<rect x="${xBar.toFixed(1)}" y="${bY.toFixed(1)}" width="${barW.toFixed(1)}" height="${bH.toFixed(1)}" fill="${fill}" rx="2"/>`;
+
+        // Wertelabel nur für das aktuelle Jahr (sonst zu unübersichtlich bei mehreren Jahren)
+        if (isCurrentSeries && fVal > 0 && val > 0) {
+          valLabels += `<text x="${(xBar + barW / 2).toFixed(1)}" y="${(bY - 3).toFixed(1)}" text-anchor="middle" font-size="${fVal}" fill="${colorText}">${val.toFixed(0)}${this._preset.valueSuffix}</text>`;
+        }
       }
 
-      const label  = monthStyle === 'initial' ? MONTHS_INITIAL[i] : MONTHS_ABBR[i];
-      const weight = isCurrent ? 'bold' : 'normal';
-      const fcolor = isCurrent ? colorText : 'var(--secondary-text-color)';
+      const label  = monthStyle === 'initial' ? MONTHS_INITIAL[m] : MONTHS_ABBR[m];
+      const isCurrentMonth = m === currentMonth;
+      const weight = isCurrentMonth ? 'bold' : 'normal';
+      const fcolor = isCurrentMonth ? colorText : 'var(--secondary-text-color)';
       xLabels += `<text x="${cx.toFixed(1)}" y="${H - 5}" text-anchor="middle" font-size="${fMonth}" font-weight="${weight}" fill="${fcolor}">${label}</text>`;
     }
 
-    // Legende
+    // Legende: ein Eintrag pro angezeigtem Jahr
     let legend = '';
     if (px >= 280) {
-      const year = new Date().getFullYear();
       const ly = pad.top - 6;
       const lx = pad.left + plotW;
-      legend = `
-        <rect x="${(lx - 130).toFixed(1)}" y="${(ly - 8).toFixed(1)}" width="10" height="10" fill="${colorPrev}" rx="2"/>
-        <text x="${(lx - 117).toFixed(1)}" y="${(ly + 1).toFixed(1)}" font-size="9" fill="var(--secondary-text-color)">${year - 1}</text>
-        <rect x="${(lx - 76).toFixed(1)}" y="${(ly - 8).toFixed(1)}" width="10" height="10" fill="${color}" rx="2"/>
-        <text x="${(lx - 63).toFixed(1)}" y="${(ly + 1).toFixed(1)}" font-size="9" fill="var(--secondary-text-color)">${year}</text>
-      `;
+      const entryW = N >= 4 ? 44 : 55;
+      years.forEach((yr, idx) => {
+        const isCurrentSeries = idx === lastIndex;
+        const swColor = isCurrentSeries ? this._config.color : this._seriesColor(idx, N);
+        const offsetFromRight = (N - idx) * entryW;
+        const sx = lx - offsetFromRight;
+        legend += `
+          <rect x="${sx.toFixed(1)}" y="${(ly - 8).toFixed(1)}" width="10" height="10" fill="${swColor}" rx="2"/>
+          <text x="${(sx + 13).toFixed(1)}" y="${(ly + 1).toFixed(1)}" font-size="9" fill="var(--secondary-text-color)">${yr}</text>
+        `;
+      });
     }
 
     const unitLabel = `<text x="${(pad.left - 4).toFixed(1)}" y="${(pad.top - 10).toFixed(1)}" text-anchor="middle" font-size="${fAxis}" fill="var(--secondary-text-color)">${this._preset.unit}</text>`;
@@ -515,10 +570,9 @@ class MonthlyBarCard extends HTMLElement {
     if (!this._config) return;
 
     const now          = new Date();
-    const year         = now.getFullYear();
     const currentMonth = now.getMonth();
-    const sumCur       = this._summary(this._data);
-    const sumPrev      = this._summary(this._prevData);
+    const years        = this._seriesYears;
+    const lastIndex    = years.length - 1;
     const px           = this._width || 0;
 
     let body;
@@ -528,12 +582,14 @@ class MonthlyBarCard extends HTMLElement {
       body = `<div class="error">Fehler: ${this._error}</div>`;
     } else {
       const showTotal = px === 0 || px >= 280;
+      const totalsItems = years.map((yr, idx) => {
+        const isCurrentSeries = idx === lastIndex;
+        const dotColor = isCurrentSeries ? this._config.color : this._seriesColor(idx, years.length);
+        const sum = this._summary(this._seriesData[idx] || []);
+        return `<span class="tot-item"><span class="dot" style="background:${dotColor}"></span>${yr}: <strong>${this._formatSummary(sum)}</strong></span>`;
+      }).join('');
       body = `
-        ${showTotal ? `
-          <div class="totals">
-            <span class="tot-item"><span class="dot" style="background:var(--color-prev)"></span>${year - 1}: <strong>${this._formatSummary(sumPrev)}</strong></span>
-            <span class="tot-item"><span class="dot" style="background:var(--color-cur)"></span>${year}: <strong>${this._formatSummary(sumCur)}</strong></span>
-          </div>` : ''}
+        ${showTotal ? `<div class="totals">${totalsItems}</div>` : ''}
         <div class="chart-wrap">${this._buildChart(currentMonth)}</div>
       `;
     }
@@ -545,8 +601,6 @@ class MonthlyBarCard extends HTMLElement {
           width: 100%;
           height: 100%;
           box-sizing: border-box;
-          --color-prev: ${this._config.colorPrev};
-          --color-cur: ${this._config.color};
           ${this._appearanceCSSVars()}
         }
         ha-card {
@@ -909,6 +963,16 @@ class MonthlyBarCardEditor extends HTMLElement {
           flex: 1;
           min-width: 0;
         }
+        .section-label {
+          font-size: 12px;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          color: var(--secondary-text-color);
+          border-top: 1px solid var(--divider-color, #e0e0e0);
+          padding-top: 12px;
+          margin-top: 4px;
+        }
       </style>
       <div class="editor-form"></div>
     `;
@@ -956,36 +1020,62 @@ class MonthlyBarCardEditor extends HTMLElement {
       ),
     ));
 
-    form.appendChild(this._colorRow(
-      'Farbe (aktuelles Jahr)',
-      `Standard für "${preset.label}": ${preset.color}`,
-      'color',
-      this._config.color ?? preset.color,
-      this._config.color != null,
+    form.appendChild(this._row(
+      'Jahre zurück',
+      'Wie viele vergangene Jahre zusätzlich zum aktuellen Jahr angezeigt werden',
+      { select: { mode: 'dropdown', options: [
+        { value: '1', label: '1 Jahr zurück (2 Jahre gesamt)' },
+        { value: '2', label: '2 Jahre zurück (3 Jahre gesamt)' },
+        { value: '3', label: '3 Jahre zurück (4 Jahre gesamt)' },
+      ] } },
+      'years_back',
+      String(this._config.years_back || 1),
     ));
 
-    form.appendChild(this._colorRow(
-      'Farbe (Vorjahr)',
-      `Standard: ${preset.colorPrev}`,
-      'color_prev',
-      this._config.color_prev ?? preset.colorPrev,
-      this._config.color_prev != null,
+    const sectionLabel = document.createElement('div');
+    sectionLabel.className = 'section-label';
+    sectionLabel.textContent = 'Farben';
+    form.appendChild(sectionLabel);
+
+    const effectiveColor = this._config.color ?? preset.color;
+    // Vorschau des "schwächeren Farbtons" als geblendete Vollfarbe, da ein
+    // natives <input type="color"> keine Transparenz darstellen kann — sonst
+    // wirkt der Standard-Vorschauwert wie die normale Hauptfarbe und nicht
+    // wie der tatsächlich im Chart genutzte, abgeschwächte Farbton.
+    const effectiveDim = this._config.color_dim ?? MonthlyBarCard.blendWithWhite(effectiveColor, 0x55 / 255);
+
+    form.appendChild(this._sideBySide(
+      this._colorRow(
+        'Aktuelles Jahr',
+        `Standard für "${preset.label}": ${preset.color}`,
+        'color',
+        effectiveColor,
+        this._config.color != null,
+      ),
+      this._colorRow(
+        'Vorjahr(e)',
+        `Standard: ${preset.colorPrev}`,
+        'color_prev',
+        this._config.color_prev ?? preset.colorPrev,
+        this._config.color_prev != null,
+      ),
     ));
 
-    form.appendChild(this._colorRow(
-      'Farbe (Text/Werte)',
-      'Standard: folgt automatisch dem Dashboard-Theme',
-      'color_text',
-      this._config.color_text ?? '#1c1c1c',
-      this._config.color_text != null,
-    ));
-
-    form.appendChild(this._colorRow(
-      'Farbe (schwächerer Farbton, aktuelles Jahr)',
-      'Für vergangene Monate des laufenden Jahres — Standard: automatisch aus Hauptfarbe abgeleitet',
-      'color_dim',
-      this._config.color_dim ?? (this._config.color ?? preset.color),
-      this._config.color_dim != null,
+    form.appendChild(this._sideBySide(
+      this._colorRow(
+        'Text / Werte',
+        'Standard: folgt Dashboard-Theme',
+        'color_text',
+        this._config.color_text ?? '#1c1c1c',
+        this._config.color_text != null,
+      ),
+      this._colorRow(
+        'Schwächerer Farbton',
+        'Vergangene Monate, aktuelles Jahr — Standard: automatisch aus Hauptfarbe',
+        'color_dim',
+        effectiveDim,
+        this._config.color_dim != null,
+      ),
     ));
 
     form.appendChild(this._row(

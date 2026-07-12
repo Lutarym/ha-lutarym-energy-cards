@@ -43,13 +43,23 @@ Alternativ per YAML:
 
 ```yaml
 type: custom:monthly-bar-card
-card_type: pv   # autarkie | energy | pv | wallbox | wp | klima
+card_type: pv           # autarkie | energy | pv | wallbox | wp | klima
+years_back: 2            # optional: 1 | 2 | 3 — zusätzliche Vorjahre (Standard: 1)
 color: "#f59e0b"        # optional, Hauptfarbe aktuelles Jahr
-color_prev: "#888888"   # optional, Farbe Vorjahr
+color_prev: "#888888"   # optional, Farbe unmittelbares Vorjahr (weiter zurückliegende Jahre werden automatisch blasser dargestellt)
 color_text: "#1c1c1c"   # optional, Text-/Wertefarbe (Standard: folgt Dashboard-Theme)
 color_dim: "#f59e0b55"  # optional, schwächerer Farbton für vergangene Monate (aktuelles Jahr)
 appearance: auto        # optional: auto | light | dark
 ```
+
+## Mehrjahresvergleich
+
+Mit `years_back` lässt sich einstellen, wie viele zusätzliche Vorjahre neben
+dem aktuellen Jahr als Balken angezeigt werden (1 bis 3, Standard: 1 —
+entspricht dem bisherigen Verhalten mit genau einem Vorjahr). Das
+unmittelbare Vorjahr nutzt `color_prev` in voller Deckkraft, weiter
+zurückliegende Jahre werden automatisch zunehmend blasser dargestellt, um
+optisch zwischen den Jahren zu unterscheiden.
 
 ## Darstellung (Hell/Dunkel)
 
