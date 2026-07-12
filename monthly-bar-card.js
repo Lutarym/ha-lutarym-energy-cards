@@ -14,6 +14,8 @@
  *   color_text: "#1c1c1c"  # optional, Text-/Wertefarbe (Standard: folgt Theme)
  *   color_dim: "#00b4d855" # optional, schwächerer Farbton (vergangene Monate, aktuelles Jahr)
  *   appearance: auto       # optional: auto | light | dark
+ *   title_font_size: 14    # optional, Schriftgröße Titel in px (Standard: 14)
+ *   label_font_size: 10    # optional, Schriftgröße Beschriftung im Diagramm in px (Standard: automatisch)
  *
  * Wird über die UI hinzugefügt ("Karte hinzufügen" → "Monthly Bar Card"),
  * kann der Typ + optionale Overrides bequem im visuellen Editor gewählt werden.
@@ -152,6 +154,8 @@ class MonthlyBarCard extends HTMLElement {
       colorText:  config.color_text ?? null,   // null = folgt Theme (var(--primary-text-color))
       colorDim:   config.color_dim  ?? null,   // null = automatisch abgeleiteter, schwächerer Farbton
       appearance: config.appearance ?? 'auto', // 'auto' | 'light' | 'dark'
+      titleFontSize: Number(config.title_font_size) || 14,
+      labelFontSize: config.label_font_size ? Number(config.label_font_size) : null, // null = automatisch (responsiv)
     };
     this._preset = preset;
 
@@ -219,6 +223,8 @@ class MonthlyBarCard extends HTMLElement {
             },
           },
         },
+        { name: 'title_font_size', selector: { number: { min: 8, max: 32, mode: 'box', unit_of_measurement: 'px' } } },
+        { name: 'label_font_size', selector: { number: { min: 6, max: 20, mode: 'box', unit_of_measurement: 'px' } } },
       ],
       computeLabel: (schema) => ({
         card_type: 'Kartentyp',
@@ -229,6 +235,8 @@ class MonthlyBarCard extends HTMLElement {
         color_text: 'Farbe Text/Werte (optional)',
         color_dim: 'Farbe schwächerer Farbton (optional)',
         appearance: 'Darstellung',
+        title_font_size: 'Schriftgröße Titel (optional, Standard 14px)',
+        label_font_size: 'Schriftgröße Beschriftung (optional, Standard automatisch)',
       })[schema.name] ?? schema.name,
     };
   }
@@ -292,20 +300,29 @@ class MonthlyBarCard extends HTMLElement {
   }
 
   _layoutParams(px) {
+    let lp;
     if (px < 280) {
-      return { H: 160, pad: { top: 18, right: 6, bottom: 24, left: 34 },
-               fMonth: 8, fAxis: 8, fVal: 0, monthStyle: 'initial', barRatio: 0.7 };
-    }
-    if (px < 420) {
-      return { H: 185, pad: { top: 22, right: 8, bottom: 28, left: 42 },
-               fMonth: 9, fAxis: 9, fVal: 0, monthStyle: 'abbr', barRatio: 0.72 };
-    }
-    if (px < 560) {
-      return { H: 210, pad: { top: 24, right: 10, bottom: 30, left: 48 },
-               fMonth: 10, fAxis: 10, fVal: 8, monthStyle: 'abbr', barRatio: 0.74 };
-    }
-    return { H: 230, pad: { top: 28, right: 14, bottom: 34, left: 54 },
+      lp = { H: 160, pad: { top: 18, right: 6, bottom: 24, left: 34 },
+             fMonth: 8, fAxis: 8, fVal: 0, monthStyle: 'initial', barRatio: 0.7 };
+    } else if (px < 420) {
+      lp = { H: 185, pad: { top: 22, right: 8, bottom: 28, left: 42 },
+             fMonth: 9, fAxis: 9, fVal: 0, monthStyle: 'abbr', barRatio: 0.72 };
+    } else if (px < 560) {
+      lp = { H: 210, pad: { top: 24, right: 10, bottom: 30, left: 48 },
+             fMonth: 10, fAxis: 10, fVal: 8, monthStyle: 'abbr', barRatio: 0.74 };
+    } else {
+      lp = { H: 230, pad: { top: 28, right: 14, bottom: 34, left: 54 },
              fMonth: 10, fAxis: 10, fVal: 9, monthStyle: 'abbr', barRatio: 0.76 };
+    }
+
+    // Feste Beschriftungsgröße überschreibt die responsiven Standardwerte
+    // für Monats-, Achsen- und Wertebeschriftung (aktiviert Wertelabels auch
+    // bei schmalen Karten, statt sie dort auszublenden).
+    if (this._config.labelFontSize) {
+      lp = { ...lp, fMonth: this._config.labelFontSize, fAxis: this._config.labelFontSize, fVal: this._config.labelFontSize };
+    }
+
+    return lp;
   }
 
   // ── SVG-Chart ─────────────────────────────────────────────────────────
@@ -503,22 +520,15 @@ class MonthlyBarCard extends HTMLElement {
         ha-card { width: 100%; }
         .card-header {
           padding: 14px 14px 2px;
-          font-size: 12px;
-          font-weight: 500;
-          letter-spacing: 0.08em;
-          text-transform: uppercase;
-          color: var(--secondary-text-color);
-        }
-        .year-label {
-          padding: 0 14px 4px;
-          font-size: 22px;
-          font-weight: 700;
+          font-size: ${this._config.titleFontSize}px;
+          font-weight: 600;
+          letter-spacing: 0.02em;
           color: var(--primary-text-color);
         }
         .totals {
           display: flex;
           gap: 16px;
-          padding: 0 14px 8px;
+          padding: 6px 14px 8px;
           font-size: 12px;
           color: var(--secondary-text-color);
         }
@@ -539,7 +549,6 @@ class MonthlyBarCard extends HTMLElement {
       </style>
       <ha-card>
         <div class="card-header">${this._config.title}</div>
-        <div class="year-label">${year}</div>
         ${body}
       </ha-card>
     `;
@@ -714,6 +723,62 @@ class MonthlyBarCardEditor extends HTMLElement {
     return wrap;
   }
 
+  // Kompaktes Zahlenfeld für Schriftgrößen (px). isAutoAllowed=true zeigt
+  // einen "Automatisch"-Button, der das Feld leert (=> responsive/Standardgröße).
+  _numberRow(labelText, hintText, field, value, min, max, isAutoAllowed) {
+    const wrap = document.createElement('div');
+    wrap.className = 'editor-row';
+
+    const label = document.createElement('label');
+    label.textContent = labelText;
+    wrap.appendChild(label);
+
+    const controls = document.createElement('div');
+    controls.className = 'color-controls';
+
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.className = 'number-input';
+    input.min = min;
+    input.max = max;
+    if (value != null) input.value = value;
+    input.addEventListener('input', ev => {
+      const v = ev.target.value === '' ? null : Number(ev.target.value);
+      this._onFieldChange(field, v);
+      if (isAutoAllowed) autoBtn.style.visibility = v == null ? 'hidden' : 'visible';
+    });
+    controls.appendChild(input);
+
+    const unit = document.createElement('span');
+    unit.className = 'color-hex';
+    unit.textContent = 'px';
+    controls.appendChild(unit);
+
+    let autoBtn;
+    if (isAutoAllowed) {
+      autoBtn = document.createElement('button');
+      autoBtn.type = 'button';
+      autoBtn.className = 'color-reset';
+      autoBtn.textContent = 'Automatisch';
+      autoBtn.style.visibility = value != null ? 'visible' : 'hidden';
+      autoBtn.addEventListener('click', () => {
+        this._onFieldChange(field, null);
+        this._render();
+      });
+      controls.appendChild(autoBtn);
+    }
+
+    wrap.appendChild(controls);
+
+    if (hintText) {
+      const hint = document.createElement('div');
+      hint.className = 'hint';
+      hint.textContent = hintText;
+      wrap.appendChild(hint);
+    }
+    return wrap;
+  }
+
   _render() {
     if (!this._config) return;
     const preset = PRESETS[this._cardType];
@@ -750,6 +815,15 @@ class MonthlyBarCardEditor extends HTMLElement {
           padding: 4px 6px;
         }
         .color-reset:hover { text-decoration: underline; }
+        .number-input {
+          width: 64px;
+          padding: 6px 8px;
+          border: 1px solid var(--divider-color, #ccc);
+          border-radius: 6px;
+          background: var(--card-background-color, #fff);
+          color: var(--primary-text-color);
+          font-size: 14px;
+        }
       </style>
       <div class="editor-form"></div>
     `;
@@ -778,6 +852,14 @@ class MonthlyBarCardEditor extends HTMLElement {
       { text: {} },
       'title',
       this._config.title,
+    ));
+
+    form.appendChild(this._numberRow(
+      'Schriftgröße Titel',
+      'Standard: 14px',
+      'title_font_size',
+      this._config.title_font_size ?? 14,
+      8, 32, false,
     ));
 
     form.appendChild(this._colorRow(
@@ -822,6 +904,14 @@ class MonthlyBarCardEditor extends HTMLElement {
       ] } },
       'appearance',
       this._config.appearance || 'auto',
+    ));
+
+    form.appendChild(this._numberRow(
+      'Schriftgröße Beschriftung',
+      'Monats-, Achsen- und Wertebeschriftung im Diagramm — Standard: automatisch (abhängig von Kartenbreite)',
+      'label_font_size',
+      this._config.label_font_size,
+      6, 20, true,
     ));
   }
 }
