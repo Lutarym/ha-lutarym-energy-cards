@@ -12,6 +12,10 @@ eigenem Custom-Element-Typ:
 | `wallbox-card.js` | `custom:wallbox-card` | Wallbox by Lutarym |
 | `battery-card.js` | `custom:battery-card` | BYD Battery by Lutarym |
 
+Alle fünf Cards haben eine grafische Konfigurationsmaske (visueller Editor)
+— beim Hinzufügen über **Dashboard bearbeiten → Karte hinzufügen** öffnet
+sich direkt ein Formular, YAML ist nirgends nötig.
+
 ## Installation über HACS
 
 1. HACS → **Frontend** → **⋮** (oben rechts) → **Benutzerdefinierte Repositories**
@@ -102,18 +106,23 @@ Entity-ID eintragen.
 ## 2. Strom-Übersicht by Lutarym
 
 Jahresverbrauch per Zählerstand-Differenz (1.1. bis heute), Vorjahresvergleich,
-Stromkosten inkl. Grundgebühr, optionale Hochrechnung aufs Jahresende.
+Stromkosten inkl. Grundgebühr, optionale Hochrechnung aufs Jahresende. Der
+Vorjahresverbrauch wird automatisch aus der Entity-Statistik berechnet;
+`previous_year_kwh` überschreibt das nur bei Bedarf manuell (z.B. wenn für
+das Vorjahr keine vollständigen historischen Daten vorliegen). Im
+visuellen Editor wird der Preis in **Cent pro kWh** eingegeben (deutsche
+Konvention) und intern automatisch in Euro umgerechnet.
 
 ```yaml
 type: custom:strom-uebersicht-card
 energy_entity: sensor.haus_strom_energie   # PFLICHT
-price_per_kwh: 0.32                         # PFLICHT
-base_fee_yearly: 150                        # optional: Jahres-Grundgebühr EUR
+price_per_kwh: 0.32                         # PFLICHT (Euro/kWh; Editor zeigt Cent/kWh)
+base_fee_yearly: 150                        # optional: Jahres-Grundgebühr EUR (hat Vorrang vor monatlich)
 base_fee_monthly: 12.5                      # optional: alternativ monatlich EUR
 base_fee_mode: accrued                      # "accrued" = tagesanteilig (Standard) | "full"
 currency: EUR                               # optional (Standard: EUR)
 show_forecast: false                        # optional: Hochrechnung Jahresende
-previous_year_kwh: 4200                     # optional: manueller Vorjahreswert
+previous_year_kwh: 4200                     # optional: manueller Vorjahreswert (überschreibt Automatik)
 title: Stromübersicht                       # optional
 ```
 

@@ -1,5 +1,8 @@
 class BydBatteryCard extends HTMLElement {
   set hass(hass) {
+    this._hass = hass;
+    if (!this._config || !this._config.entity) return; // hass kann vor setConfig eintreffen (z.B. Editor-Vorschau)
+
     const state = hass.states[this._config.entity];
     const newPct = state ? Math.max(0, Math.min(100, parseFloat(state.state))) : 0;
 
@@ -281,14 +284,179 @@ class BydBatteryCard extends HTMLElement {
     this._particles = [];
     this._matrixCols = [];
     this.innerHTML = '';
+    if (this._hass) this.hass = this._hass; // hass war schon da (z.B. Editor-Vorschau) → jetzt nachträglich anwenden
   }
 
   getCardSize() { return 1; }
+
+  static getConfigElement() {
+    return document.createElement('battery-card-editor');
+  }
 
   static getStubConfig() {
     return { entity: 'sensor.byd_battery_box_premium_hv_ladezustand', height: 60, animation: 0, name: 'BYD Batteriestand', show_name: true, show_percent: true };
   }
 }
+
+// ── Visueller Config-Editor ──────────────────────────────────────────────
+
+class BatteryCardEditor extends HTMLElement {
+  setConfig(config) {
+    this._config = { ...config };
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    this.querySelectorAll('ha-selector').forEach(sel => { sel.hass = hass; });
+  }
+
+  _fireChanged() {
+    this.dispatchEvent(new CustomEvent('config-changed', {
+      detail: { config: this._config },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
+  _onChange(field, value, isNumber) {
+    if (value === '' || value == null) {
+      delete this._config[field];
+    } else {
+      this._config[field] = isNumber ? Number(value) : value;
+    }
+    this._fireChanged();
+  }
+
+  _textRow(label, field, value, placeholder) {
+    const wrap = document.createElement('div');
+    wrap.className = 'row';
+    wrap.innerHTML = `<label>${label}</label>`;
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = value ?? '';
+    if (placeholder) input.placeholder = placeholder;
+    input.addEventListener('change', ev => this._onChange(field, ev.target.value));
+    wrap.appendChild(input);
+    return wrap;
+  }
+
+  _numberRow(label, field, value, placeholder) {
+    const wrap = document.createElement('div');
+    wrap.className = 'row';
+    wrap.innerHTML = `<label>${label}</label>`;
+    const input = document.createElement('input');
+    input.type = 'number';
+    if (value != null) input.value = value;
+    if (placeholder) input.placeholder = placeholder;
+    input.addEventListener('change', ev => this._onChange(field, ev.target.value, true));
+    wrap.appendChild(input);
+    return wrap;
+  }
+
+  _entityRow(label, field, value) {
+    const wrap = document.createElement('div');
+    wrap.className = 'row';
+    wrap.innerHTML = `<label>${label}</label>`;
+    const selector = document.createElement('ha-selector');
+    selector.hass = this._hass;
+    selector.selector = { entity: {} };
+    selector.value = value ?? '';
+    selector.addEventListener('value-changed', ev => {
+      ev.stopPropagation();
+      this._onChange(field, ev.detail.value);
+    });
+    wrap.appendChild(selector);
+    return wrap;
+  }
+
+  _selectRow(label, field, value, options) {
+    const wrap = document.createElement('div');
+    wrap.className = 'row';
+    wrap.innerHTML = `<label>${label}</label>`;
+    const select = document.createElement('select');
+    options.forEach(opt => {
+      const o = document.createElement('option');
+      o.value = opt.value;
+      o.textContent = opt.label;
+      if (String(opt.value) === String(value)) o.selected = true;
+      select.appendChild(o);
+    });
+    select.addEventListener('change', ev => this._onChange(field, ev.target.value, true));
+    wrap.appendChild(select);
+    return wrap;
+  }
+
+  _checkboxRow(label, field, value, defaultTrue) {
+    const wrap = document.createElement('div');
+    wrap.className = 'row checkbox-row';
+    const l = document.createElement('label');
+    l.textContent = label;
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = value != null ? !!value : !!defaultTrue;
+    input.addEventListener('change', ev => this._onChange(field, ev.target.checked));
+    wrap.appendChild(input);
+    wrap.appendChild(l);
+    return wrap;
+  }
+
+  _render() {
+    if (!this._config) return;
+    const cfg = this._config;
+
+    this.innerHTML = `
+      <style>
+        .form { display: flex; flex-direction: column; gap: 14px; padding: 4px 0; }
+        .row { display: flex; flex-direction: column; gap: 4px; }
+        .row label { font-size: 13px; font-weight: 500; color: var(--primary-text-color); }
+        .row input[type="text"], .row input[type="number"], .row select {
+          padding: 8px 10px; border: 1px solid var(--divider-color, #ccc);
+          border-radius: 6px; background: var(--card-background-color, #fff);
+          color: var(--primary-text-color); font-size: 14px; box-sizing: border-box;
+        }
+        .checkbox-row { flex-direction: row; align-items: center; gap: 8px; }
+        .checkbox-row label { font-weight: 400; }
+        .row-pair { display: flex; gap: 16px; }
+        .row-pair > .row { flex: 1; min-width: 0; }
+      </style>
+      <div class="form"></div>
+    `;
+    const form = this.querySelector('.form');
+
+    form.appendChild(this._entityRow('Batterie-Ladezustand-Entity (Pflicht, %)', 'entity', cfg.entity));
+    form.appendChild(this._textRow('Name', 'name', cfg.name, 'BYD Batteriestand'));
+
+    const animRow = this._selectRow('Animationsstil', 'animation', cfg.animation ?? 0, [
+      { value: 0, label: '0 – Statisch' },
+      { value: 1, label: '1 – Wellen' },
+      { value: 2, label: '2 – Pulsieren' },
+      { value: 3, label: '3 – Blasen' },
+      { value: 4, label: '4 – Glitzer' },
+      { value: 5, label: '5 – Sanft auffüllend' },
+      { value: 6, label: '6 – Schimmern' },
+      { value: 7, label: '7 – Blitz' },
+      { value: 8, label: '8 – Regen' },
+      { value: 9, label: '9 – Feuer' },
+      { value: 10, label: '10 – Matrix' },
+      { value: 11, label: '11 – Scanline' },
+      { value: 12, label: '12 – Herzschlag' },
+    ]);
+    form.appendChild(animRow);
+
+    const sizePair = document.createElement('div');
+    sizePair.className = 'row-pair';
+    sizePair.appendChild(this._numberRow('Höhe (px)', 'height', cfg.height, '60'));
+    sizePair.appendChild(this._numberRow('Breite (px, optional)', 'width', cfg.width, 'automatisch'));
+    form.appendChild(sizePair);
+
+    form.appendChild(this._numberRow('Schriftgröße Prozentanzeige (px, optional)', 'percent_size', cfg.percent_size, 'automatisch'));
+    form.appendChild(this._checkboxRow('Name anzeigen', 'show_name', cfg.show_name, true));
+    form.appendChild(this._checkboxRow('Prozentanzeige anzeigen', 'show_percent', cfg.show_percent, true));
+  }
+}
+
+customElements.define('battery-card-editor', BatteryCardEditor);
 
 customElements.define('battery-card', BydBatteryCard);
 window.customCards = window.customCards || [];

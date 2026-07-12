@@ -16,7 +16,7 @@
  * KONFIGURATION
  *   type: custom:strom-uebersicht-card
  *   energy_entity: sensor.haus_strom_energie   # PFLICHT
- *   price_per_kwh: 0.32                         # PFLICHT
+ *   price_per_kwh: 0.32                         # PFLICHT (Euro/kWh; im visuellen Editor als Cent/kWh eingebbar)
  *   base_fee_yearly: 150                        # optional: Jahres-Grundgebuehr EUR
  *   base_fee_monthly: 12.5                      # optional: alternativ monatlich EUR
  *   base_fee_mode: accrued                      # "accrued" = tagesanteilig (Default)
@@ -58,6 +58,10 @@ class StromUebersichtCard extends HTMLElement {
   }
 
   getCardSize() { return 4; }
+
+  static getConfigElement() {
+    return document.createElement('strom-uebersicht-card-editor');
+  }
 
   connectedCallback() {
     if (this._hass && this._config && !this._data) this._load();
@@ -372,7 +376,202 @@ StromUebersichtCard.getStubConfig = () => ({
   base_fee_yearly: 150,
 });
 
+// ── Visueller Config-Editor ──────────────────────────────────────────────
+
+class StromUebersichtCardEditor extends HTMLElement {
+  setConfig(config) {
+    this._config = { ...config };
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    this.querySelectorAll('ha-selector').forEach(sel => { sel.hass = hass; });
+  }
+
+  _fireChanged() {
+    this.dispatchEvent(new CustomEvent('config-changed', {
+      detail: { config: this._config },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
+  _onChange(field, value, isNumber) {
+    if (value === '' || value == null) {
+      delete this._config[field];
+    } else {
+      this._config[field] = isNumber ? Number(value) : value;
+    }
+    this._fireChanged();
+  }
+
+  _textRow(label, field, value, placeholder) {
+    const wrap = document.createElement('div');
+    wrap.className = 'row';
+    const l = document.createElement('label');
+    l.textContent = label;
+    wrap.appendChild(l);
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = value ?? '';
+    if (placeholder) input.placeholder = placeholder;
+    input.addEventListener('change', ev => this._onChange(field, ev.target.value));
+    wrap.appendChild(input);
+    return wrap;
+  }
+
+  _numberRow(label, field, value, placeholder, step) {
+    const wrap = document.createElement('div');
+    wrap.className = 'row';
+    const l = document.createElement('label');
+    l.textContent = label;
+    wrap.appendChild(l);
+    const input = document.createElement('input');
+    input.type = 'number';
+    if (step) input.step = step;
+    if (value != null) input.value = value;
+    if (placeholder) input.placeholder = placeholder;
+    input.addEventListener('change', ev => this._onChange(field, ev.target.value, true));
+    wrap.appendChild(input);
+    return wrap;
+  }
+
+  _entityRow(label, field, value) {
+    const wrap = document.createElement('div');
+    wrap.className = 'row';
+    const l = document.createElement('label');
+    l.textContent = label;
+    wrap.appendChild(l);
+    const selector = document.createElement('ha-selector');
+    selector.hass = this._hass;
+    selector.selector = { entity: {} };
+    selector.value = value ?? '';
+    selector.addEventListener('value-changed', ev => {
+      ev.stopPropagation();
+      this._onChange(field, ev.detail.value);
+    });
+    wrap.appendChild(selector);
+    return wrap;
+  }
+
+  _selectRow(label, field, value, options) {
+    const wrap = document.createElement('div');
+    wrap.className = 'row';
+    const l = document.createElement('label');
+    l.textContent = label;
+    wrap.appendChild(l);
+    const select = document.createElement('select');
+    options.forEach(opt => {
+      const o = document.createElement('option');
+      o.value = opt.value;
+      o.textContent = opt.label;
+      if (opt.value === value) o.selected = true;
+      select.appendChild(o);
+    });
+    select.addEventListener('change', ev => this._onChange(field, ev.target.value));
+    wrap.appendChild(select);
+    return wrap;
+  }
+
+  _checkboxRow(label, field, value) {
+    const wrap = document.createElement('div');
+    wrap.className = 'row checkbox-row';
+    const l = document.createElement('label');
+    l.textContent = label;
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = !!value;
+    input.addEventListener('change', ev => this._onChange(field, ev.target.checked ? true : null));
+    wrap.appendChild(input);
+    wrap.appendChild(l);
+    return wrap;
+  }
+
+  _priceRow(label, field, valueEuro, placeholderCt, hintText) {
+    const wrap = document.createElement('div');
+    wrap.className = 'row';
+    wrap.innerHTML = `<label>${label}</label>`;
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.step = '0.01';
+    if (valueEuro != null && valueEuro !== '') {
+      input.value = +(Number(valueEuro) * 100).toFixed(4); // Euro -> Cent für die Anzeige
+    }
+    if (placeholderCt) input.placeholder = placeholderCt;
+    input.addEventListener('change', ev => {
+      const ct = ev.target.value;
+      if (ct === '') {
+        delete this._config[field];
+      } else {
+        this._config[field] = Number(ct) / 100; // Cent -> Euro für die Speicherung
+      }
+      this._fireChanged();
+    });
+    wrap.appendChild(input);
+    if (hintText) {
+      const hint = document.createElement('div');
+      hint.className = 'hint';
+      hint.textContent = hintText;
+      wrap.appendChild(hint);
+    }
+    return wrap;
+  }
+
+  _render() {
+    if (!this._config) return;
+    const cfg = this._config;
+
+    this.innerHTML = `
+      <style>
+        .form { display: flex; flex-direction: column; gap: 14px; padding: 4px 0; }
+        .row { display: flex; flex-direction: column; gap: 4px; }
+        .row label { font-size: 13px; font-weight: 500; color: var(--primary-text-color); }
+        .row input[type="text"], .row input[type="number"], .row select {
+          padding: 8px 10px; border: 1px solid var(--divider-color, #ccc);
+          border-radius: 6px; background: var(--card-background-color, #fff);
+          color: var(--primary-text-color); font-size: 14px; box-sizing: border-box;
+        }
+        .checkbox-row { flex-direction: row; align-items: center; gap: 8px; }
+        .checkbox-row label { font-weight: 400; }
+        .hint { font-size: 11px; color: var(--secondary-text-color); margin-top: -8px; }
+      </style>
+      <div class="form"></div>
+    `;
+    const form = this.querySelector('.form');
+
+    form.appendChild(this._textRow('Titel', 'title', cfg.title, 'Stromübersicht'));
+    form.appendChild(this._entityRow('Energie-Entity (Pflicht)', 'energy_entity', cfg.energy_entity));
+    form.appendChild(this._priceRow('Preis pro kWh (Pflicht)', 'price_per_kwh', cfg.price_per_kwh, '32,50', 'Eingabe in Cent pro kWh (ct/kWh) — wird intern in Euro gespeichert.'));
+    form.appendChild(this._numberRow('Grundgebühr jährlich (EUR)', 'base_fee_yearly', cfg.base_fee_yearly, 'z.B. 150', '0.01'));
+    form.appendChild(this._numberRow('Grundgebühr monatlich (EUR, Alternative)', 'base_fee_monthly', cfg.base_fee_monthly, 'z.B. 12.50', '0.01'));
+    {
+      const hint = document.createElement('div');
+      hint.className = 'hint';
+      hint.textContent = 'Nur eines von beidem ausfüllen — jährlich hat Vorrang, falls beide gesetzt sind.';
+      form.appendChild(hint);
+    }
+    form.appendChild(this._selectRow('Grundgebühr-Modus', 'base_fee_mode', cfg.base_fee_mode || 'accrued', [
+      { value: 'accrued', label: 'Tagesanteilig' },
+      { value: 'full', label: 'Volle Jahresgebühr' },
+    ]));
+    form.appendChild(this._textRow('Währung', 'currency', cfg.currency, 'EUR'));
+    form.appendChild(this._numberRow('Manueller Vorjahreswert (kWh)', 'previous_year_kwh', cfg.previous_year_kwh, 'optional'));
+    {
+      const hint = document.createElement('div');
+      hint.className = 'hint';
+      hint.textContent = 'Der Vorjahresverbrauch wird automatisch aus der Entity-Statistik berechnet (1.1.–31.12. Vorjahr), sofern für den Zeitraum Daten vorhanden sind. Leer lassen für automatische Berechnung — nur bei fehlenden/unvollständigen historischen Daten manuell überschreiben.';
+      form.appendChild(hint);
+    }
+    form.appendChild(this._checkboxRow('Hochrechnung Jahresende anzeigen', 'show_forecast', cfg.show_forecast));
+  }
+}
+
+customElements.define('strom-uebersicht-card-editor', StromUebersichtCardEditor);
+
 customElements.define('strom-uebersicht-card', StromUebersichtCard);
+
+
 
 window.customCards = window.customCards || [];
 window.customCards.push({

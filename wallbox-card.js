@@ -50,6 +50,10 @@ class WallboxCard extends HTMLElement {
 
   getCardSize() { return 3; }
 
+  static getConfigElement() {
+    return document.createElement('wallbox-card-editor');
+  }
+
   // ---- Hilfsfunktionen --------------------------------------------------
 
   _fmt(v, minD, maxD) {
@@ -321,6 +325,125 @@ WallboxCard.getStubConfig = () => ({
   switch_entity: 'switch.wallbox_laden',
   price_per_kwh: 0.32,
 });
+
+// ── Visueller Config-Editor ──────────────────────────────────────────────
+
+class WallboxCardEditor extends HTMLElement {
+  setConfig(config) {
+    this._config = { ...config };
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    this.querySelectorAll('ha-selector').forEach(sel => { sel.hass = hass; });
+  }
+
+  _fireChanged() {
+    this.dispatchEvent(new CustomEvent('config-changed', {
+      detail: { config: this._config },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
+  _onChange(field, value, isNumber) {
+    if (value === '' || value == null) {
+      delete this._config[field];
+    } else {
+      this._config[field] = isNumber ? Number(value) : value;
+    }
+    this._fireChanged();
+  }
+
+  _textRow(label, field, value, placeholder) {
+    const wrap = document.createElement('div');
+    wrap.className = 'row';
+    wrap.innerHTML = `<label>${label}</label>`;
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = value ?? '';
+    if (placeholder) input.placeholder = placeholder;
+    input.addEventListener('change', ev => this._onChange(field, ev.target.value));
+    wrap.appendChild(input);
+    return wrap;
+  }
+
+  _numberRow(label, field, value, placeholder, step) {
+    const wrap = document.createElement('div');
+    wrap.className = 'row';
+    wrap.innerHTML = `<label>${label}</label>`;
+    const input = document.createElement('input');
+    input.type = 'number';
+    if (step) input.step = step;
+    if (value != null) input.value = value;
+    if (placeholder) input.placeholder = placeholder;
+    input.addEventListener('change', ev => this._onChange(field, ev.target.value, true));
+    wrap.appendChild(input);
+    return wrap;
+  }
+
+  _entityRow(label, field, value) {
+    const wrap = document.createElement('div');
+    wrap.className = 'row';
+    wrap.innerHTML = `<label>${label}</label>`;
+    const selector = document.createElement('ha-selector');
+    selector.hass = this._hass;
+    selector.selector = { entity: {} };
+    selector.value = value ?? '';
+    selector.addEventListener('value-changed', ev => {
+      ev.stopPropagation();
+      this._onChange(field, ev.detail.value);
+    });
+    wrap.appendChild(selector);
+    return wrap;
+  }
+
+  _render() {
+    if (!this._config) return;
+    const cfg = this._config;
+
+    this.innerHTML = `
+      <style>
+        .form { display: flex; flex-direction: column; gap: 14px; padding: 4px 0; }
+        .row { display: flex; flex-direction: column; gap: 4px; }
+        .row label { font-size: 13px; font-weight: 500; color: var(--primary-text-color); }
+        .row input[type="text"], .row input[type="number"] {
+          padding: 8px 10px; border: 1px solid var(--divider-color, #ccc);
+          border-radius: 6px; background: var(--card-background-color, #fff);
+          color: var(--primary-text-color); font-size: 14px; box-sizing: border-box;
+        }
+        .section-label {
+          font-size: 12px; font-weight: 600; text-transform: uppercase;
+          letter-spacing: 0.06em; color: var(--secondary-text-color);
+          border-top: 1px solid var(--divider-color, #e0e0e0);
+          padding-top: 12px; margin-top: 4px;
+        }
+      </style>
+      <div class="form"></div>
+    `;
+    const form = this.querySelector('.form');
+
+    form.appendChild(this._textRow('Titel', 'title', cfg.title, 'Wallbox'));
+    form.appendChild(this._entityRow('Ladeleistung-Entity (Pflicht)', 'power_entity', cfg.power_entity));
+    form.appendChild(this._entityRow('Ladestrom-Entity (optional)', 'current_entity', cfg.current_entity));
+    form.appendChild(this._entityRow('Energie-Entity (optional, Session/heute)', 'energy_entity', cfg.energy_entity));
+    form.appendChild(this._entityRow('Stecker-Entity (optional)', 'plug_entity', cfg.plug_entity));
+    form.appendChild(this._entityRow('Status-Entity (optional, hat Vorrang)', 'status_entity', cfg.status_entity));
+    form.appendChild(this._entityRow('Start/Stop-Schalter (optional)', 'switch_entity', cfg.switch_entity));
+
+    const sectionLabel = document.createElement('div');
+    sectionLabel.className = 'section-label';
+    sectionLabel.textContent = 'Kosten & Schwellwerte';
+    form.appendChild(sectionLabel);
+
+    form.appendChild(this._numberRow('Preis pro kWh (optional)', 'price_per_kwh', cfg.price_per_kwh, 'z.B. 0.32', '0.01'));
+    form.appendChild(this._textRow('Währung', 'currency', cfg.currency, 'EUR'));
+    form.appendChild(this._numberRow('Schwellwert "lädt" (W)', 'idle_threshold_w', cfg.idle_threshold_w, '50'));
+  }
+}
+
+customElements.define('wallbox-card-editor', WallboxCardEditor);
 
 customElements.define('wallbox-card', WallboxCard);
 
