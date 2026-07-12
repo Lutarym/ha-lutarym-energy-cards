@@ -1,46 +1,166 @@
 /**
  * lutarym-energy-card.js
- * Lovelace Custom Card — Monatliche Balkendiagramme (kombiniert)
- * Vereint: Autarkie, Stromverbrauch, PV Ertrag, Wallbox, Wärmepumpe, Klimaanlage
- * Aktuelles Jahr + Vorjahr als Vergleichsbalken
+ * Lovelace Custom Card — combined monthly bar charts
+ * Covers: self-sufficiency, power consumption, PV yield, wallbox, heat pump, air conditioning
+ * Current year + previous year(s) as comparison bars
  *
  * YAML:
  *   type: custom:lutarym-energy-card
  *   card_type: energy      # autarkie | energy | pv | wallbox | wp | klima
- *   entity: sensor.xyz     # optional, überschreibt Preset-Default
- *   title: Mein Titel      # optional, überschreibt Preset-Default
- *   color: "#00b4d8"       # optional, überschreibt Preset-Default (aktuelles Jahr)
- *   color_prev: "#888888"  # optional, überschreibt Preset-Default (Vorjahr)
- *   color_text: "#1c1c1c"  # optional, Text-/Wertefarbe (Standard: folgt Theme)
- *   color_dim: "#00b4d855" # optional, schwächerer Farbton (vergangene Monate, aktuelles Jahr)
+ *   entity: sensor.xyz     # optional, overrides the preset default
+ *   title: My Title        # optional, overrides the preset default
+ *   color: "#00b4d8"       # optional, overrides the preset default (current year)
+ *   color_prev: "#888888"  # optional, overrides the preset default (previous year)
+ *   color_text: "#1c1c1c"  # optional, text/value color (default: follows theme)
+ *   color_dim: "#00b4d855" # optional, muted color (past months, current year)
  *   appearance: auto       # optional: auto | light | dark
- *   title_font_size: 14    # optional, Schriftgröße Titel in px (Standard: 14)
- *   label_font_size: 10    # optional, Schriftgröße Beschriftung im Diagramm in px (Standard: automatisch)
- *   years_back: 1           # optional: 0 | 1 | 2 | 3 — zusätzliche Vorjahre, 0 = nur aktuelles Jahr (Standard: 1)
+ *   title_font_size: 14    # optional, title font size in px (default: 14)
+ *   label_font_size: 10    # optional, chart label font size in px (default: automatic)
+ *   years_back: 1           # optional: 0 | 1 | 2 | 3 — additional previous years, 0 = current year only (default: 1)
  *
- * Wird über die UI hinzugefügt ("Karte hinzufügen" → "Monthly Bar Card"),
- * kann der Typ + optionale Overrides bequem im visuellen Editor gewählt werden.
+ * Added via the UI ("Add Card" → "Energy Card by Lutarym"); the card type
+ * plus optional overrides can be chosen conveniently in the visual editor.
  */
 
-// ── Presets für die verschiedenen Card-Typen ────────────────────────────────
+// ── Simple i18n helper (falls back to English) ─────────────────────────
+
+const I18N = {
+  en: {
+    editorCardType: 'Card type',
+    editorEntity: 'Entity',
+    editorEntityHint: 'Optional — default for "{preset}": {entity}',
+    editorTitle: 'Title',
+    editorTitleHint: 'Optional — default: {title}',
+    editorTitleFontSize: 'Title font size',
+    editorTitleFontSizeHint: 'Default: 14px',
+    editorLabelFontSize: 'Label font size',
+    editorLabelFontSizeHint: 'Month/axis/value labels — default: automatic',
+    editorYearsBack: 'Years back',
+    editorYearsBackHint: 'How many past years to show in addition to the current year',
+    yearsBack0: 'Current year only (no comparison)',
+    yearsBack1: '1 year back (2 years total)',
+    yearsBack2: '2 years back (3 years total)',
+    yearsBack3: '3 years back (4 years total)',
+    sectionColors: 'Colors',
+    colorCurrentYear: 'Current year',
+    colorCurrentYearHint: 'Default for "{preset}": {color}',
+    colorPreviousYears: 'Previous year(s)',
+    colorPreviousYearsHint: 'Default: {color}',
+    colorTextValues: 'Text / values',
+    colorTextValuesHint: 'Default: follows dashboard theme',
+    colorDimLabel: 'Muted color',
+    colorDimHint: 'Past months, current year — default: automatically derived from the main color',
+    editorAppearance: 'Appearance',
+    editorAppearanceHint: 'Automatic follows the dashboard theme; light/dark forces fixed colors for this card only',
+    appearanceAuto: 'Automatic (dashboard theme)',
+    appearanceLight: 'Force light',
+    appearanceDark: 'Force dark',
+    resetLabel: 'Reset',
+    autoLabel: 'Automatic',
+    loading: 'Loading data…',
+    error: 'Error: {msg}',
+    unknownError: 'Unknown error',
+  },
+  de: {
+    editorCardType: 'Kartentyp',
+    editorEntity: 'Entity',
+    editorEntityHint: 'Optional — Standard für "{preset}": {entity}',
+    editorTitle: 'Titel',
+    editorTitleHint: 'Optional — Standard: {title}',
+    editorTitleFontSize: 'Schriftgröße Titel',
+    editorTitleFontSizeHint: 'Standard: 14px',
+    editorLabelFontSize: 'Schriftgröße Beschriftung',
+    editorLabelFontSizeHint: 'Monats-/Achsen-/Wertebeschriftung — Standard: automatisch',
+    editorYearsBack: 'Jahre zurück',
+    editorYearsBackHint: 'Wie viele vergangene Jahre zusätzlich zum aktuellen Jahr angezeigt werden',
+    yearsBack0: 'Nur aktuelles Jahr (kein Vergleich)',
+    yearsBack1: '1 Jahr zurück (2 Jahre gesamt)',
+    yearsBack2: '2 Jahre zurück (3 Jahre gesamt)',
+    yearsBack3: '3 Jahre zurück (4 Jahre gesamt)',
+    sectionColors: 'Farben',
+    colorCurrentYear: 'Aktuelles Jahr',
+    colorCurrentYearHint: 'Standard für "{preset}": {color}',
+    colorPreviousYears: 'Vorjahr(e)',
+    colorPreviousYearsHint: 'Standard: {color}',
+    colorTextValues: 'Text / Werte',
+    colorTextValuesHint: 'Standard: folgt Dashboard-Theme',
+    colorDimLabel: 'Schwächerer Farbton',
+    colorDimHint: 'Vergangene Monate, aktuelles Jahr — Standard: automatisch aus Hauptfarbe',
+    editorAppearance: 'Darstellung',
+    editorAppearanceHint: 'Automatisch folgt dem Dashboard-Theme; Hell/Dunkel erzwingt feste Farben nur für diese Karte',
+    appearanceAuto: 'Automatisch (Dashboard-Theme)',
+    appearanceLight: 'Hell erzwingen',
+    appearanceDark: 'Dunkel erzwingen',
+    resetLabel: 'Zurücksetzen',
+    autoLabel: 'Automatisch',
+    loading: 'Lade Daten…',
+    error: 'Fehler: {msg}',
+    unknownError: 'Unbekannter Fehler',
+  },
+};
+
+// Preset display names/titles per language — kept separate from PRESETS
+// (below) so the preset data itself stays language-independent.
+const PRESET_I18N = {
+  en: {
+    autarkie: { label: 'Self-Sufficiency', title: 'Self-Sufficiency' },
+    energy:   { label: 'Power Consumption', title: 'Power Consumption' },
+    pv:       { label: 'PV Yield', title: 'PV Yield' },
+    wallbox:  { label: 'Wallbox', title: 'Wallbox' },
+    wp:       { label: 'Heat Pump', title: 'Heat Pump' },
+    klima:    { label: 'Air Conditioning', title: 'Air Conditioning' },
+  },
+  de: {
+    autarkie: { label: 'Autarkie', title: 'Autarkie' },
+    energy:   { label: 'Stromverbrauch', title: 'Stromverbrauch' },
+    pv:       { label: 'PV Ertrag', title: 'PV Ertrag' },
+    wallbox:  { label: 'Wallbox', title: 'Wallbox' },
+    wp:       { label: 'Wärmepumpe', title: 'Wärmepumpe' },
+    klima:    { label: 'Klimaanlage', title: 'Klimaanlage' },
+  },
+};
+
+const MONTHS_ABBR = {
+  en: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
+  de: ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'],
+};
+const MONTHS_INITIAL = {
+  en: ['J','F','M','A','M','J','J','A','S','O','N','D'],
+  de: ['J','F','M','A','M','J','J','A','S','O','N','D'],
+};
+
+function lutarymLang(hass) {
+  const raw = (hass && hass.language) || (typeof navigator !== 'undefined' ? navigator.language : 'en') || 'en';
+  return raw.toLowerCase().startsWith('de') ? 'de' : 'en';
+}
+
+function t(hass, key, vars) {
+  const dict = I18N[lutarymLang(hass)] || I18N.en;
+  let str = dict[key] ?? I18N.en[key] ?? key;
+  if (vars) Object.keys(vars).forEach(k => { str = str.replace(`{${k}}`, vars[k]); });
+  return str;
+}
+
+function presetInfo(hass, cardType) {
+  const dict = PRESET_I18N[lutarymLang(hass)] || PRESET_I18N.en;
+  return dict[cardType] ?? PRESET_I18N.en[cardType];
+}
+
+// ── Presets for the different card types (language-independent data) ───────
 
 const PRESETS = {
   autarkie: {
-    label:      'Autarkie',
     entity:     'sensor.autarkie',
-    title:      'Autarkie',
     color:      '#22c55e',
     colorPrev:  '#888888',
     unit:       '%',
-    statType:   'mean',      // 'mean' = Durchschnittswert je Monat (recorder mean)
-    fixedMax:   100,         // Y-Achse fix 0–100 %
-    aggregate:  'avg',       // Summary-Wert: Durchschnitt statt Summe
+    statType:   'mean',      // 'mean' = monthly average value (recorder mean)
+    fixedMax:   100,         // Y-axis fixed 0-100%
+    aggregate:  'avg',       // summary value: average instead of sum
     valueSuffix: '%',
   },
   energy: {
-    label:      'Stromverbrauch',
     entity:     'sensor.stromverbrauch',
-    title:      'Stromverbrauch',
     color:      '#00b4d8',
     colorPrev:  '#888888',
     unit:       'kWh',
@@ -50,9 +170,7 @@ const PRESETS = {
     valueSuffix: '',
   },
   pv: {
-    label:      'PV Ertrag',
     entity:     'sensor.pv_ertrag',
-    title:      'PV Ertrag',
     color:      '#f59e0b',
     colorPrev:  '#888888',
     unit:       'kWh',
@@ -62,9 +180,7 @@ const PRESETS = {
     valueSuffix: '',
   },
   wallbox: {
-    label:      'Wallbox',
     entity:     'sensor.wallbox',
-    title:      'Wallbox',
     color:      '#3b82f6',
     colorPrev:  '#888888',
     unit:       'kWh',
@@ -74,9 +190,7 @@ const PRESETS = {
     valueSuffix: '',
   },
   wp: {
-    label:      'Wärmepumpe',
     entity:     'sensor.waermepumpe',
-    title:      'Wärmepumpe',
     color:      '#ef4444',
     colorPrev:  '#888888',
     unit:       'kWh',
@@ -86,9 +200,7 @@ const PRESETS = {
     valueSuffix: '',
   },
   klima: {
-    label:      'Klimaanlage',
     entity:     'sensor.klimaanlage',
-    title:      'Klimaanlage',
     color:      '#06b6d4',
     colorPrev:  '#888888',
     unit:       'kWh',
@@ -101,14 +213,14 @@ const PRESETS = {
 
 const CARD_TYPE_KEYS = Object.keys(PRESETS);
 
-// ── Haupt-Card ───────────────────────────────────────────────────────────
+// ── Main card ───────────────────────────────────────────────────────────
 
 class LutarymEnergyCard extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: 'open' });
-    this._seriesYears = [];   // Jahre, älteste zuerst, letztes = aktuelles Jahr
-    this._seriesData  = [];   // je Jahr: Array[12] mit Monatswerten
+    this._seriesYears = [];   // years, oldest first, last = current year
+    this._seriesData  = [];   // per year: Array[12] of monthly values
     this._loading   = true;
     this._error     = null;
     this._lastFetch = 0;
@@ -144,6 +256,7 @@ class LutarymEnergyCard extends HTMLElement {
   setConfig(config) {
     const cardType = CARD_TYPE_KEYS.includes(config.card_type) ? config.card_type : 'energy';
     const preset = PRESETS[cardType];
+    const info = presetInfo(this._hass, cardType);
 
     const newEntity = config.entity ?? preset.entity;
     const rawYearsBack = config.years_back != null ? Number(config.years_back) : 1;
@@ -157,21 +270,21 @@ class LutarymEnergyCard extends HTMLElement {
     this._config = {
       card_type:  cardType,
       entity:     newEntity,
-      title:      config.title      ?? preset.title,
+      title:      config.title      ?? info.title,
       color:      config.color      ?? preset.color,
       colorPrev:  config.color_prev ?? preset.colorPrev,
-      colorText:  config.color_text ?? null,   // null = folgt Theme (var(--primary-text-color))
-      colorDim:   config.color_dim  ?? null,   // null = automatisch abgeleiteter, schwächerer Farbton
+      colorText:  config.color_text ?? null,   // null = follows theme (var(--primary-text-color))
+      colorDim:   config.color_dim  ?? null,   // null = automatically derived muted color
       appearance: config.appearance ?? 'auto', // 'auto' | 'light' | 'dark'
       titleFontSize: Number(config.title_font_size) || 14,
-      labelFontSize: config.label_font_size ? Number(config.label_font_size) : null, // null = automatisch (responsiv)
-      yearsBack:  newYearsBack, // 1-3, wie viele Jahre zusätzlich zum aktuellen Jahr angezeigt werden
+      labelFontSize: config.label_font_size ? Number(config.label_font_size) : null, // null = automatic (responsive)
+      yearsBack:  newYearsBack, // 0-3, how many years in addition to the current year are shown
     };
     this._preset = preset;
 
     if (entityOrTypeChanged) {
-      // Nur bei Typ-, Entity- oder Jahres-Wechsel Daten neu laden (nicht bei
-      // jedem Tastendruck in Titel/Farbe im Editor — vermeidet Preview-Flackern).
+      // Only reload data on type/entity/years change (not on every
+      // keystroke in the editor's title/color fields — avoids preview flicker).
       this._lastFetch = 0;
       this._seriesYears = [];
       this._seriesData  = [];
@@ -198,10 +311,12 @@ class LutarymEnergyCard extends HTMLElement {
     return { card_type: 'energy' };
   }
 
-  // Moderner Weg (HA rendert automatisch ein natives <ha-form>, falls die
-  // Editor-Komponente unten aus irgendeinem Grund nicht greift). Dient als
-  // Fallback/zusätzliche Absicherung, damit garantiert eine GUI-Maske erscheint.
+  // Modern approach (HA automatically renders a native <ha-form> if the
+  // editor component below fails to load for some reason). Serves as a
+  // fallback/extra safeguard so a GUI form is guaranteed to appear.
   static getConfigForm() {
+    const lang = (typeof navigator !== 'undefined' ? navigator.language : 'en') || 'en';
+    const fallbackHass = { language: lang };
     return {
       schema: [
         {
@@ -210,7 +325,7 @@ class LutarymEnergyCard extends HTMLElement {
           selector: {
             select: {
               mode: 'dropdown',
-              options: CARD_TYPE_KEYS.map(k => ({ value: k, label: PRESETS[k].label })),
+              options: CARD_TYPE_KEYS.map(k => ({ value: k, label: presetInfo(fallbackHass, k).label })),
             },
           },
         },
@@ -222,10 +337,10 @@ class LutarymEnergyCard extends HTMLElement {
             select: {
               mode: 'dropdown',
               options: [
-                { value: '0', label: 'Nur aktuelles Jahr (kein Vergleich)' },
-                { value: '1', label: '1 Jahr zurück (2 Jahre gesamt)' },
-                { value: '2', label: '2 Jahre zurück (3 Jahre gesamt)' },
-                { value: '3', label: '3 Jahre zurück (4 Jahre gesamt)' },
+                { value: '0', label: t(fallbackHass, 'yearsBack0') },
+                { value: '1', label: t(fallbackHass, 'yearsBack1') },
+                { value: '2', label: t(fallbackHass, 'yearsBack2') },
+                { value: '3', label: t(fallbackHass, 'yearsBack3') },
               ],
             },
           },
@@ -240,9 +355,9 @@ class LutarymEnergyCard extends HTMLElement {
             select: {
               mode: 'dropdown',
               options: [
-                { value: 'auto', label: 'Automatisch (Dashboard-Theme)' },
-                { value: 'light', label: 'Hell erzwingen' },
-                { value: 'dark', label: 'Dunkel erzwingen' },
+                { value: 'auto', label: t(fallbackHass, 'appearanceAuto') },
+                { value: 'light', label: t(fallbackHass, 'appearanceLight') },
+                { value: 'dark', label: t(fallbackHass, 'appearanceDark') },
               ],
             },
           },
@@ -251,26 +366,25 @@ class LutarymEnergyCard extends HTMLElement {
         { name: 'label_font_size', selector: { number: { min: 6, max: 20, mode: 'box', unit_of_measurement: 'px' } } },
       ],
       computeLabel: (schema) => ({
-        card_type: 'Kartentyp',
-        entity: 'Entity (optional, überschreibt Preset)',
-        title: 'Titel (optional, überschreibt Preset)',
-        years_back: 'Jahre zurück',
-        color: 'Farbe aktuelles Jahr (optional, überschreibt Preset)',
-        color_prev: 'Farbe Vorjahr (optional, überschreibt Preset)',
-        color_text: 'Farbe Text/Werte (optional)',
-        color_dim: 'Farbe schwächerer Farbton (optional)',
-        appearance: 'Darstellung',
-        title_font_size: 'Schriftgröße Titel (optional, Standard 14px)',
-        label_font_size: 'Schriftgröße Beschriftung (optional, Standard automatisch)',
+        card_type: t(fallbackHass, 'editorCardType'),
+        entity: t(fallbackHass, 'editorEntity'),
+        title: t(fallbackHass, 'editorTitle'),
+        years_back: t(fallbackHass, 'editorYearsBack'),
+        color: t(fallbackHass, 'colorCurrentYear'),
+        color_prev: t(fallbackHass, 'colorPreviousYears'),
+        color_text: t(fallbackHass, 'colorTextValues'),
+        color_dim: t(fallbackHass, 'colorDimLabel'),
+        appearance: t(fallbackHass, 'editorAppearance'),
+        title_font_size: t(fallbackHass, 'editorTitleFontSize'),
+        label_font_size: t(fallbackHass, 'editorLabelFontSize'),
       })[schema.name] ?? schema.name,
     };
   }
 
-
-  // ── Datenabruf ────────────────────────────────────────────────────────
+  // ── Data fetching ────────────────────────────────────────────────────
 
   async _fetchYear(year) {
-    const statType = this._preset.statType; // 'mean' oder 'change'
+    const statType = this._preset.statType; // 'mean' or 'change'
     const wsRequest = {
       type:          'recorder/statistics_during_period',
       start_time:    new Date(year, 0, 1).toISOString(),
@@ -298,8 +412,8 @@ class LutarymEnergyCard extends HTMLElement {
 
     const currentYear = new Date().getFullYear();
     const yearsBack    = this._config.yearsBack;
-    // älteste zuerst, aktuelles Jahr zuletzt — so werden die Balken von
-    // links (ältestes Jahr) nach rechts (aktuelles Jahr) angeordnet.
+    // oldest first, current year last — so bars are arranged from left
+    // (oldest year) to right (current year).
     const years = [];
     for (let y = currentYear - yearsBack; y <= currentYear; y++) years.push(y);
 
@@ -309,14 +423,14 @@ class LutarymEnergyCard extends HTMLElement {
       this._seriesData  = results;
     } catch (err) {
       console.error('[lutarym-energy-card]', err);
-      this._error = err.message ?? 'Unbekannter Fehler';
+      this._error = err.message ?? t(this._hass, 'unknownError');
     }
 
     this._loading = false;
     this._render();
   }
 
-  // ── Hilfsfunktionen ───────────────────────────────────────────────────
+  // ── Helpers ───────────────────────────────────────────────────────
 
   _niceMax(val) {
     if (val <= 0) return 100;
@@ -345,10 +459,10 @@ class LutarymEnergyCard extends HTMLElement {
     return lp;
   }
 
-  // Kontinuierliche Skalierung der Beschriftungsgröße anhand der tatsächlichen
-  // Kartenbreite UND -höhe (statt fester Stufen) — Text wächst/schrumpft so
-  // flüssig mit, wenn die Karte größer oder kleiner gezogen wird. Eine manuell
-  // gesetzte Beschriftungsgröße (label_font_size) überschreibt das weiterhin fest.
+  // Continuous scaling of the label font size based on the actual card
+  // width AND height (instead of fixed steps) — text grows/shrinks
+  // smoothly as the card is resized. A manually set label font size
+  // (label_font_size) still overrides this fixed value.
   _labelFontSizes(px, H, defaultH) {
     if (this._config.labelFontSize) {
       const f = this._config.labelFontSize;
@@ -366,23 +480,23 @@ class LutarymEnergyCard extends HTMLElement {
     return { fMonth, fAxis, fVal };
   }
 
-  // Höhe von Titel + Summary-Zeile + Chart-Padding — alles außer dem
-  // eigentlichen Diagramm. Wird gebraucht, um zu wissen, wie viel von der
-  // insgesamt verfügbaren Kartenhöhe für das Diagramm selbst übrig bleibt.
+  // Height of title + summary row + chart padding — everything except the
+  // actual chart. Needed to know how much of the total available card
+  // height remains for the chart itself.
   _nonChartOverhead(px) {
     const titleFontSize = this._config.titleFontSize || 14;
-    const headerH = 14 + titleFontSize * 1.3 + 2; // Padding-top + Zeilenhöhe + Padding-bottom
+    const headerH = 14 + titleFontSize * 1.3 + 2; // padding-top + line height + padding-bottom
     const showTotal = px === 0 || px >= 280;
     const totalsH = showTotal ? 32 : 0;
     const chartPaddingBottom = 10;
     return headerH + totalsH + chartPaddingBottom;
   }
 
-  // Tatsächliche Chart-Höhe: folgt der vom ResizeObserver gemessenen Karten-
-  // höhe (this._height), sobald diese bekannt ist — z.B. wenn die Karte in
-  // einem Sections-/Grid-Dashboard höher oder niedriger gezogen wird. Ohne
-  // bekannte/externe Höhe (klassisches Masonry-Dashboard) wird weiterhin der
-  // responsive Breakpoint-Standardwert verwendet.
+  // Effective chart height: follows the card height measured by the
+  // ResizeObserver (this._height) once known — e.g. when the card is
+  // resized taller/shorter in a Sections/grid dashboard. Without a
+  // known/external height (classic Masonry dashboard) the responsive
+  // breakpoint default is used instead.
   _effectiveChartHeight(defaultH, px) {
     if (!this._height) return defaultH;
     const overhead = this._nonChartOverhead(px);
@@ -391,21 +505,21 @@ class LutarymEnergyCard extends HTMLElement {
     return Math.max(MIN_CHART_H, Math.round(available));
   }
 
-  // Farbe für eine Jahres-Serie: letzte Serie (aktuelles Jahr) nutzt "color",
-  // vorletzte (unmittelbares Vorjahr) nutzt "colorPrev" unverändert, weiter
-  // zurückliegende Jahre nutzen zunehmend transparentere Varianten von
-  // colorPrev, damit sie sich optisch klar vom Vorjahr abheben.
+  // Color for a given year series: the last series (current year) uses
+  // "color", the second-to-last (immediate previous year) uses "colorPrev"
+  // unchanged, further-back years use increasingly transparent variants of
+  // colorPrev so they stand out clearly from the previous year.
   _seriesColor(index, total) {
     const isCurrent = index === total - 1;
     if (isCurrent) return this._config.color;
-    const distance = total - 1 - index; // 1 = unmittelbares Vorjahr, 2/3 = weiter zurück
+    const distance = total - 1 - index; // 1 = immediate previous year, 2/3 = further back
     const FADE = { 1: '', 2: 'aa', 3: '77' };
     return this._config.colorPrev + (FADE[distance] ?? '77');
   }
 
-  // Mischt eine Hex-Farbe mit Weiß, um eine blasse Vorschau-/Fallback-Variante
-  // zu erzeugen (z.B. für den "schwächerer Farbton"-Vorschauswatch im Editor,
-  // da <input type="color"> keine Transparenz darstellen kann).
+  // Blends a hex color with white to produce a pale preview/fallback
+  // variant (e.g. for the "muted color" preview swatch in the editor,
+  // since <input type="color"> can't represent transparency).
   static blendWithWhite(hex, alpha) {
     const h = hex.replace('#', '');
     const r = parseInt(h.substring(0, 2), 16);
@@ -415,11 +529,12 @@ class LutarymEnergyCard extends HTMLElement {
     return '#' + [mix(r), mix(g), mix(b)].map(v => v.toString(16).padStart(2, '0')).join('');
   }
 
-  // ── SVG-Chart ─────────────────────────────────────────────────────────
+  // ── SVG chart ─────────────────────────────────────────────────────────
 
   _buildChart(currentMonth) {
-    const MONTHS_ABBR    = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
-    const MONTHS_INITIAL = ['J','F','M','A','M','J','J','A','S','O','N','D'];
+    const lang = lutarymLang(this._hass);
+    const MONTHS_ABBR_L    = MONTHS_ABBR[lang];
+    const MONTHS_INITIAL_L = MONTHS_INITIAL[lang];
 
     const px = this._width || 400;
     const lp = this._layoutParams(px);
@@ -435,9 +550,9 @@ class LutarymEnergyCard extends HTMLElement {
     const years  = this._seriesYears;
     const series = this._seriesData;
     const N      = Math.max(years.length, 1);
-    const lastIndex = N - 1; // Index des aktuellen Jahres (letzte Serie)
+    const lastIndex = N - 1; // index of the current year (last series)
 
-    // N Balken pro Monat nebeneinander, mit kleinem Gap dazwischen
+    // N bars per month side by side, with a small gap between them
     const gap      = slotW * (N > 2 ? 0.035 : 0.06);
     const totalGap = gap * (N - 1);
     const barW     = (slotW * barRatio - totalGap) / N;
@@ -447,7 +562,7 @@ class LutarymEnergyCard extends HTMLElement {
     const colorDim  = this._config.colorDim || (this._config.color + '55');
     const colorText = this._config.colorText || 'var(--primary-text-color)';
 
-    // Max-Wert: fest (z.B. Autarkie 0–100%) oder dynamisch über alle Serien
+    // Max value: fixed (e.g. self-sufficiency 0-100%) or dynamic across all series
     let maxVal;
     if (this._preset.fixedMax != null) {
       maxVal = this._preset.fixedMax;
@@ -468,7 +583,7 @@ class LutarymEnergyCard extends HTMLElement {
     let bars = '', xLabels = '', valLabels = '';
     for (let m = 0; m < 12; m++) {
       const cx = pad.left + m * slotW + slotW / 2;
-      const isFutureMonth = m > currentMonth; // nur relevant für aktuelles Jahr
+      const isFutureMonth = m > currentMonth; // only relevant for the current year
 
       for (let s = 0; s < N; s++) {
         const isCurrentSeries = s === lastIndex;
@@ -494,20 +609,20 @@ class LutarymEnergyCard extends HTMLElement {
           : this._seriesColor(s, N);
         bars += `<rect x="${xBar.toFixed(1)}" y="${bY.toFixed(1)}" width="${barW.toFixed(1)}" height="${bH.toFixed(1)}" fill="${fill}" rx="2"/>`;
 
-        // Wertelabel nur für das aktuelle Jahr (sonst zu unübersichtlich bei mehreren Jahren)
+        // Value label only for the current year (otherwise too cluttered with multiple years)
         if (isCurrentSeries && fVal > 0 && val > 0) {
           valLabels += `<text x="${(xBar + barW / 2).toFixed(1)}" y="${(bY - 3).toFixed(1)}" text-anchor="middle" font-size="${fVal}" fill="${colorText}">${val.toFixed(0)}${this._preset.valueSuffix}</text>`;
         }
       }
 
-      const label  = monthStyle === 'initial' ? MONTHS_INITIAL[m] : MONTHS_ABBR[m];
+      const label  = monthStyle === 'initial' ? MONTHS_INITIAL_L[m] : MONTHS_ABBR_L[m];
       const isCurrentMonth = m === currentMonth;
       const weight = isCurrentMonth ? 'bold' : 'normal';
       const fcolor = isCurrentMonth ? colorText : 'var(--secondary-text-color)';
       xLabels += `<text x="${cx.toFixed(1)}" y="${H - 5}" text-anchor="middle" font-size="${fMonth}" font-weight="${weight}" fill="${fcolor}">${label}</text>`;
     }
 
-    // Legende: ein Eintrag pro angezeigtem Jahr
+    // Legend: one entry per displayed year
     let legend = '';
     if (px >= 280) {
       const ly = pad.top - 6;
@@ -536,8 +651,8 @@ class LutarymEnergyCard extends HTMLElement {
     </svg>`;
   }
 
-  // ── Darstellungsmodus (Automatisch folgt Dashboard-Theme via HA-CSS-Vars;
-  //    Hell/Dunkel erzwingen lokale Overrides nur für diese Card-Instanz) ──
+  // ── Appearance mode (auto follows dashboard theme via HA CSS vars;
+  //    light/dark force local overrides only for this card instance) ──
 
   _appearanceCSSVars() {
     const mode = this._config.appearance || 'auto';
@@ -557,10 +672,10 @@ class LutarymEnergyCard extends HTMLElement {
         --card-background-color: #1e1e1e;
       `;
     }
-    return ''; // auto: nichts überschreiben, HA-Theme-Variablen greifen wie gewohnt
+    return ''; // auto: nothing overridden, HA theme variables apply as usual
   }
 
-  // ── Summary (Durchschnitt oder Summe je nach Preset) ─────────────────
+  // ── Summary (average or sum depending on the preset) ─────────────────
 
   _summary(arr) {
     const vals = arr.filter(v => v !== null);
@@ -584,6 +699,7 @@ class LutarymEnergyCard extends HTMLElement {
 
   _render() {
     if (!this._config) return;
+    const hass = this._hass;
 
     const now          = new Date();
     const currentMonth = now.getMonth();
@@ -593,9 +709,9 @@ class LutarymEnergyCard extends HTMLElement {
 
     let body;
     if (this._loading) {
-      body = `<div class="loading">Lade Daten…</div>`;
+      body = `<div class="loading">${t(hass, 'loading')}</div>`;
     } else if (this._error) {
-      body = `<div class="error">Fehler: ${this._error}</div>`;
+      body = `<div class="error">${t(hass, 'error', { msg: this._error })}</div>`;
     } else {
       const showTotal = px === 0 || px >= 280;
       const totalsItems = years.map((yr, idx) => {
@@ -673,10 +789,10 @@ class LutarymEnergyCard extends HTMLElement {
     });
   }
 
-  // Dynamische Höhenschätzung statt fixem Wert — sonst passt die von Home
-  // Assistant reservierte Fläche in Masonry-/Sections-Dashboards nicht zur
-  // tatsächlich gerenderten Höhe (abhängig von Kartenbreite, Titel- und
-  // Beschriftungsgröße), was zu Überlappungen oder Lücken führt.
+  // Dynamic height estimation instead of a fixed value — otherwise the
+  // area reserved by Home Assistant in Masonry/Sections dashboards
+  // wouldn't match the actually rendered height (which depends on card
+  // width, title, and label font size), causing overlaps or gaps.
   _estimatedPixelHeight() {
     const px = this._width || 400;
     const lp = this._layoutParams(px);
@@ -687,7 +803,7 @@ class LutarymEnergyCard extends HTMLElement {
     return Math.max(1, Math.ceil(this._estimatedPixelHeight() / 50));
   }
 
-  // Für die neueren "Sections"-Dashboards: Grid-Höhe in Reihen (1 Reihe ≈ 56px)
+  // For the newer "Sections" dashboards: grid height in rows (1 row ≈ 56px)
   getGridOptions() {
     const rows = Math.max(3, Math.ceil(this._estimatedPixelHeight() / 56));
     return {
@@ -700,21 +816,21 @@ class LutarymEnergyCard extends HTMLElement {
 
 customElements.define('lutarym-energy-card', LutarymEnergyCard);
 
-// ── Visueller Config-Editor ──────────────────────────────────────────────
-// Nutzt native HA-Formularelemente (<ha-selector>), damit die Eingabemaske
-// exakt aussieht wie bei eingebauten Home-Assistant-Cards: Dropdown für den
-// Kartentyp, durchsuchbarer Entity-Picker, Text- und Farbfelder.
-// Es muss NICHTS per YAML eingetragen werden — alles läuft über diese GUI.
+// ── Visual config editor ────────────────────────────────────────────────
+// Uses native HA form elements (<ha-selector>) so the input form looks
+// exactly like built-in Home Assistant cards: a dropdown for the card
+// type, a searchable entity picker, and text/color fields. NOTHING needs
+// to be entered via YAML — everything runs through this GUI.
 
 class LutarymEnergyCardEditor extends HTMLElement {
   setConfig(config) {
-    // WICHTIG: setConfig wird von Home Assistant auch dann erneut aufgerufen,
-    // wenn WIR SELBST gerade config-changed gefeuert haben (z.B. bei jedem
-    // Tastendruck in einem Textfeld). Würden wir hier jedes Mal das komplette
-    // Formular neu bauen (_render mit innerHTML), verliert das aktive Eingabe-
-    // feld bei jedem Buchstaben den Fokus/Cursor. Deshalb nur neu rendern,
-    // wenn es sich um den allerersten Aufruf handelt oder sich der Kartentyp
-    // von außen geändert hat (z.B. durch Undo oder manuelle YAML-Bearbeitung).
+    // IMPORTANT: Home Assistant calls setConfig again even when WE
+    // ourselves just fired config-changed (e.g. on every keystroke in a
+    // text field). If we rebuilt the entire form every time (_render with
+    // innerHTML), the currently focused input field would lose
+    // focus/cursor on every keystroke. So only re-render on the very
+    // first call, or when the card type changed externally (e.g. via
+    // undo or manual YAML editing).
     const firstLoad    = !this._config;
     const typeChanged   = !firstLoad && config.card_type !== this._config.card_type;
 
@@ -727,7 +843,7 @@ class LutarymEnergyCardEditor extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
-    // Entity-Picker etc. brauchen hass für Autovervollständigung/Anzeige
+    // entity pickers etc. need hass for autocomplete/display
     this.querySelectorAll('ha-selector').forEach(sel => { sel.hass = hass; });
   }
 
@@ -745,11 +861,11 @@ class LutarymEnergyCardEditor extends HTMLElement {
   }
 
   _onTypeChange(value) {
-    // Nur die Preset-Overrides zurücksetzen, damit die Presets des neuen Typs
-    // greifen. Das äußere "type"-Feld (custom:lutarym-energy-card) und alle
-    // sonstigen von Home Assistant verwalteten Schlüssel (z.B. grid_options)
-    // MÜSSEN erhalten bleiben — sonst erkennt HA die Karte nicht mehr und
-    // fällt auf den rohen YAML-Editor zurück.
+    // Only reset the preset overrides so the new type's presets apply.
+    // The outer "type" field (custom:lutarym-energy-card) and any other
+    // keys managed by Home Assistant (e.g. grid_options) MUST be
+    // preserved — otherwise HA no longer recognizes the card and falls
+    // back to the raw YAML editor.
     const preserved = { ...this._config };
     delete preserved.entity;
     delete preserved.title;
@@ -781,11 +897,11 @@ class LutarymEnergyCardEditor extends HTMLElement {
 
     let control;
     if (selectorObj.select) {
-      // Natives <select> statt <ha-selector> für Dropdowns: ha-selector wird
-      // von Home Assistant asynchron nachgeladen — wird der Editor sehr früh
-      // erzeugt (bevor die Komponente registriert ist), gehen Klicks/Werte
-      // gelegentlich verloren ("Dropdown reagiert falsch"). Natives <select>
-      // funktioniert immer zuverlässig, unabhängig vom Ladezeitpunkt.
+      // Native <select> instead of <ha-selector> for dropdowns: ha-selector
+      // is loaded asynchronously by Home Assistant — if the editor is
+      // created very early (before the component is registered), clicks
+      // and values are occasionally lost ("dropdown behaves incorrectly").
+      // Native <select> always works reliably, regardless of load timing.
       control = document.createElement('select');
       control.className = 'native-select';
       (selectorObj.select.options || []).forEach(opt => {
@@ -825,12 +941,12 @@ class LutarymEnergyCardEditor extends HTMLElement {
     return wrap;
   }
 
-  // Kompaktes, natives Farbfeld (<input type="color">) statt des sehr breiten
-  // ha-selector-Farbwählers. effectiveValue ist der tatsächlich wirksame Wert
-  // (Override, falls gesetzt, sonst Preset-Default) — damit die Voreinstellung
-  // im Feld angezeigt wird statt immer Schwarz. Ein "Zurücksetzen"-Button
-  // entfernt einen gesetzten Override wieder, sodass wieder der automatische
-  // Standard greift.
+  // Compact native color field (<input type="color">) instead of the very
+  // wide ha-selector color picker. effectiveValue is the actually
+  // effective value (override, if set, otherwise the preset default) —
+  // so the field shows the actual default instead of always black. A
+  // "Reset" button removes a set override so the automatic default
+  // applies again.
   _colorRow(labelText, hintText, field, effectiveValue, isOverridden) {
     const wrap = document.createElement('div');
     wrap.className = 'editor-row';
@@ -861,7 +977,7 @@ class LutarymEnergyCardEditor extends HTMLElement {
     const resetBtn = document.createElement('button');
     resetBtn.type = 'button';
     resetBtn.className = 'color-reset';
-    resetBtn.textContent = 'Zurücksetzen';
+    resetBtn.textContent = t(this._hass, 'resetLabel');
     resetBtn.style.visibility = isOverridden ? 'visible' : 'hidden';
     resetBtn.addEventListener('click', () => {
       this._onFieldChange(field, null);
@@ -880,10 +996,10 @@ class LutarymEnergyCardEditor extends HTMLElement {
     return wrap;
   }
 
-  // Kompaktes Zahlenfeld für Schriftgrößen (px). isAutoAllowed=true zeigt
-  // einen "Automatisch"-Button, der das Feld leert. placeholderText wird
-  // angezeigt, wenn das Feld leer ist — macht sichtbar, welche
-  // Standard-Schriftgröße dann greift, statt dass das Feld einfach leer wirkt.
+  // Compact number field for font sizes (px). isAutoAllowed=true shows an
+  // "Automatic" button that clears the field. placeholderText is shown
+  // when the field is empty — makes it visible which default font size
+  // applies, instead of the field just looking empty.
   _numberRow(labelText, hintText, field, value, min, max, isAutoAllowed, placeholderText) {
     const wrap = document.createElement('div');
     wrap.className = 'editor-row';
@@ -919,7 +1035,7 @@ class LutarymEnergyCardEditor extends HTMLElement {
       autoBtn = document.createElement('button');
       autoBtn.type = 'button';
       autoBtn.className = 'color-reset';
-      autoBtn.textContent = 'Automatisch';
+      autoBtn.textContent = t(this._hass, 'autoLabel');
       autoBtn.style.visibility = value != null ? 'visible' : 'hidden';
       autoBtn.addEventListener('click', () => {
         this._onFieldChange(field, null);
@@ -939,7 +1055,7 @@ class LutarymEnergyCardEditor extends HTMLElement {
     return wrap;
   }
 
-  // Zwei Formularzeilen nebeneinander statt untereinander anordnen
+  // Arrange two form rows side by side instead of stacked
   _sideBySide(...rows) {
     const wrap = document.createElement('div');
     wrap.className = 'row-pair';
@@ -949,7 +1065,9 @@ class LutarymEnergyCardEditor extends HTMLElement {
 
   _render() {
     if (!this._config) return;
+    const hass = this._hass;
     const preset = PRESETS[this._cardType];
+    const info = presetInfo(hass, this._cardType);
 
     this.innerHTML = `
       <style>
@@ -1028,24 +1146,24 @@ class LutarymEnergyCardEditor extends HTMLElement {
     const form = this.querySelector('.editor-form');
 
     form.appendChild(this._row(
-      'Kartentyp',
+      t(hass, 'editorCardType'),
       null,
-      { select: { mode: 'dropdown', options: CARD_TYPE_KEYS.map(k => ({ value: k, label: PRESETS[k].label })) } },
+      { select: { mode: 'dropdown', options: CARD_TYPE_KEYS.map(k => ({ value: k, label: presetInfo(hass, k).label })) } },
       'card_type',
       this._cardType,
     ));
 
     form.appendChild(this._row(
-      'Entity',
-      `Optional — Standard für "${preset.label}": ${preset.entity}`,
+      t(hass, 'editorEntity'),
+      t(hass, 'editorEntityHint', { preset: info.label, entity: preset.entity }),
       { entity: {} },
       'entity',
       this._config.entity,
     ));
 
     form.appendChild(this._row(
-      'Titel',
-      `Optional — Standard: ${preset.title}`,
+      t(hass, 'editorTitle'),
+      t(hass, 'editorTitleHint', { title: info.title }),
       { text: {} },
       'title',
       this._config.title,
@@ -1053,29 +1171,29 @@ class LutarymEnergyCardEditor extends HTMLElement {
 
     form.appendChild(this._sideBySide(
       this._numberRow(
-        'Schriftgröße Titel',
-        'Standard: 14px',
+        t(hass, 'editorTitleFontSize'),
+        t(hass, 'editorTitleFontSizeHint'),
         'title_font_size',
         this._config.title_font_size,
         8, 32, true, '14',
       ),
       this._numberRow(
-        'Schriftgröße Beschriftung',
-        'Monats-/Achsen-/Wertebeschriftung — Standard: automatisch',
+        t(hass, 'editorLabelFontSize'),
+        t(hass, 'editorLabelFontSizeHint'),
         'label_font_size',
         this._config.label_font_size,
-        6, 20, true, 'auto',
+        6, 20, true, t(hass, 'autoLabel'),
       ),
     ));
 
     form.appendChild(this._row(
-      'Jahre zurück',
-      'Wie viele vergangene Jahre zusätzlich zum aktuellen Jahr angezeigt werden',
+      t(hass, 'editorYearsBack'),
+      t(hass, 'editorYearsBackHint'),
       { select: { mode: 'dropdown', options: [
-        { value: '0', label: 'Nur aktuelles Jahr (kein Vergleich)' },
-        { value: '1', label: '1 Jahr zurück (2 Jahre gesamt)' },
-        { value: '2', label: '2 Jahre zurück (3 Jahre gesamt)' },
-        { value: '3', label: '3 Jahre zurück (4 Jahre gesamt)' },
+        { value: '0', label: t(hass, 'yearsBack0') },
+        { value: '1', label: t(hass, 'yearsBack1') },
+        { value: '2', label: t(hass, 'yearsBack2') },
+        { value: '3', label: t(hass, 'yearsBack3') },
       ] } },
       'years_back',
       String(this._config.years_back ?? 1),
@@ -1083,27 +1201,27 @@ class LutarymEnergyCardEditor extends HTMLElement {
 
     const sectionLabel = document.createElement('div');
     sectionLabel.className = 'section-label';
-    sectionLabel.textContent = 'Farben';
+    sectionLabel.textContent = t(hass, 'sectionColors');
     form.appendChild(sectionLabel);
 
     const effectiveColor = this._config.color ?? preset.color;
-    // Vorschau des "schwächeren Farbtons" als geblendete Vollfarbe, da ein
-    // natives <input type="color"> keine Transparenz darstellen kann — sonst
-    // wirkt der Standard-Vorschauwert wie die normale Hauptfarbe und nicht
-    // wie der tatsächlich im Chart genutzte, abgeschwächte Farbton.
+    // Preview of the "muted color" as a blended solid color, since a
+    // native <input type="color"> can't represent transparency —
+    // otherwise the default preview value would look like the plain main
+    // color instead of the muted color actually used in the chart.
     const effectiveDim = this._config.color_dim ?? LutarymEnergyCard.blendWithWhite(effectiveColor, 0x55 / 255);
 
     form.appendChild(this._sideBySide(
       this._colorRow(
-        'Aktuelles Jahr',
-        `Standard für "${preset.label}": ${preset.color}`,
+        t(hass, 'colorCurrentYear'),
+        t(hass, 'colorCurrentYearHint', { preset: info.label, color: preset.color }),
         'color',
         effectiveColor,
         this._config.color != null,
       ),
       this._colorRow(
-        'Vorjahr(e)',
-        `Standard: ${preset.colorPrev}`,
+        t(hass, 'colorPreviousYears'),
+        t(hass, 'colorPreviousYearsHint', { color: preset.colorPrev }),
         'color_prev',
         this._config.color_prev ?? preset.colorPrev,
         this._config.color_prev != null,
@@ -1112,15 +1230,15 @@ class LutarymEnergyCardEditor extends HTMLElement {
 
     form.appendChild(this._sideBySide(
       this._colorRow(
-        'Text / Werte',
-        'Standard: folgt Dashboard-Theme',
+        t(hass, 'colorTextValues'),
+        t(hass, 'colorTextValuesHint'),
         'color_text',
         this._config.color_text ?? '#1c1c1c',
         this._config.color_text != null,
       ),
       this._colorRow(
-        'Schwächerer Farbton',
-        'Vergangene Monate, aktuelles Jahr — Standard: automatisch aus Hauptfarbe',
+        t(hass, 'colorDimLabel'),
+        t(hass, 'colorDimHint'),
         'color_dim',
         effectiveDim,
         this._config.color_dim != null,
@@ -1128,12 +1246,12 @@ class LutarymEnergyCardEditor extends HTMLElement {
     ));
 
     form.appendChild(this._row(
-      'Darstellung',
-      'Automatisch folgt dem Dashboard-Theme; Hell/Dunkel erzwingt feste Farben nur für diese Karte',
+      t(hass, 'editorAppearance'),
+      t(hass, 'editorAppearanceHint'),
       { select: { mode: 'dropdown', options: [
-        { value: 'auto',  label: 'Automatisch (Dashboard-Theme)' },
-        { value: 'light', label: 'Hell erzwingen' },
-        { value: 'dark',  label: 'Dunkel erzwingen' },
+        { value: 'auto',  label: t(hass, 'appearanceAuto') },
+        { value: 'light', label: t(hass, 'appearanceLight') },
+        { value: 'dark',  label: t(hass, 'appearanceDark') },
       ] } },
       'appearance',
       this._config.appearance || 'auto',
@@ -1143,11 +1261,11 @@ class LutarymEnergyCardEditor extends HTMLElement {
 
 customElements.define('lutarym-energy-card-editor', LutarymEnergyCardEditor);
 
-// ── Registrierung bei HACS / "Karte hinzufügen"-Dialog ──────────────────
+// ── Registration for HACS / "Add Card" dialog ──────────────────
 
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: 'lutarym-energy-card',
   name: 'Energy Card by Lutarym',
-  description: 'Monatliches Balkendiagramm (Autarkie, Stromverbrauch, PV, Wallbox, Wärmepumpe, Klimaanlage) — aktuelles Jahr vs. Vorjahre.',
+  description: 'Monthly bar chart (self-sufficiency, power consumption, PV, wallbox, heat pump, air conditioning) — current year vs. previous years.',
 });

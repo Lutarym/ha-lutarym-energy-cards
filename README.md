@@ -1,20 +1,22 @@
 # Energy Card by Lutarym
 
-Lovelace Custom Card für Home Assistant — monatliche Balkendiagramme
-(aktuelles Jahr vs. bis zu 3 Vorjahre) für Autarkie, Stromverbrauch,
-PV Ertrag, Wallbox, Wärmepumpe und Klimaanlage. Eine Card, der Kartentyp
-wird über eine grafische Konfigurationsmaske ausgewählt.
+Lovelace Custom Card for Home Assistant — monthly bar charts (current year
+vs. up to 3 previous years) for self-sufficiency, power consumption, PV
+yield, wallbox, heat pump, and air conditioning. A single card; the card
+type is chosen via a visual configuration form. The editor and the card
+itself are fully bilingual (German/English), following `hass.language`
+automatically.
 
-## Installation über HACS
+## Installation via HACS
 
-1. HACS → Frontend → **⋮** → Benutzerdefinierte Repositories
-2. Repository-URL dieses Repos eintragen, Kategorie **Dashboard**
-3. "Energy Card by Lutarym" installieren
-4. HA neu laden (Browser-Cache ggf. leeren)
+1. HACS → Frontend → **⋮** → Custom repositories
+2. Enter this repository's URL, category **Dashboard**
+3. Install "Energy Card by Lutarym"
+4. Reload Home Assistant (clear browser cache if needed)
 
-## Manuelle Installation
+## Manual installation
 
-`lutarym-energy-card.js` nach `config/www/` kopieren:
+Copy `lutarym-energy-card.js` to `config/www/`:
 
 ```yaml
 resources:
@@ -22,38 +24,38 @@ resources:
     type: module
 ```
 
-## Verwendung
+## Usage
 
-Über **Dashboard bearbeiten → Karte hinzufügen → "Energy Card by Lutarym"**
-hinzufügen — öffnet direkt die grafische Konfigurationsmaske.
+Add via **Edit Dashboard → Add Card → "Energy Card by Lutarym"** — opens
+the visual configuration form directly.
 
 ```yaml
 type: custom:lutarym-energy-card
 card_type: pv            # autarkie | energy | pv | wallbox | wp | klima
-years_back: 2             # optional: 0 | 1 | 2 | 3 — zusätzliche Vorjahre (Standard: 1)
-color: "#f59e0b"         # optional, Hauptfarbe aktuelles Jahr
-color_prev: "#888888"    # optional, Farbe unmittelbares Vorjahr
-color_text: "#1c1c1c"    # optional, Text-/Wertefarbe (Standard: folgt Theme)
-color_dim: "#f59e0b55"   # optional, schwächerer Farbton (vergangene Monate, aktuelles Jahr)
+years_back: 2             # optional: 0 | 1 | 2 | 3 — additional previous years (default: 1)
+color: "#f59e0b"         # optional, main color for the current year
+color_prev: "#888888"    # optional, color for the immediate previous year
+color_text: "#1c1c1c"    # optional, text/value color (default: follows theme)
+color_dim: "#f59e0b55"   # optional, muted color (past months, current year)
 appearance: auto         # optional: auto | light | dark
-title_font_size: 14       # optional, Standard 14px
-label_font_size: 10       # optional, Standard: automatisch
+title_font_size: 14       # optional, default 14px
+label_font_size: 10       # optional, default: automatic
 ```
 
 ### Presets
 
-| card_type | Standard-Entity | Titel | Farbe |
+| card_type | Default entity | Title | Color |
 |---|---|---|---|
-| autarkie | sensor.autarkie | Autarkie | `#22c55e` |
-| energy | sensor.stromverbrauch | Stromverbrauch | `#00b4d8` |
-| pv | sensor.pv_ertrag | PV Ertrag | `#f59e0b` |
+| autarkie | sensor.autarkie | Self-Sufficiency | `#22c55e` |
+| energy | sensor.stromverbrauch | Power Consumption | `#00b4d8` |
+| pv | sensor.pv_ertrag | PV Yield | `#f59e0b` |
 | wallbox | sensor.wallbox | Wallbox | `#3b82f6` |
-| wp | sensor.waermepumpe | Wärmepumpe | `#ef4444` |
-| klima | sensor.klimaanlage | Klimaanlage | `#06b6d4` |
+| wp | sensor.waermepumpe | Heat Pump | `#ef4444` |
+| klima | sensor.klimaanlage | Air Conditioning | `#06b6d4` |
 
-Die Standard-Entities sind Platzhalter — im Editor die tatsächliche
-Entity-ID eintragen.
+The default entities are placeholders — enter your actual entity ID in
+the editor.
 
-## Lizenz
+## License
 
-Privat / persönlicher Gebrauch.
+Private / personal use.
