@@ -1,6 +1,6 @@
 {
-  "name": "Lutarym HA Cards",
+  "name": "Energy Card by Lutarym",
   "render_readme": true,
   "content_in_root": true,
-  "filename": "lutarym-ha-cards.js"
+  "filename": "lutarym-energy-card.js"
 }
