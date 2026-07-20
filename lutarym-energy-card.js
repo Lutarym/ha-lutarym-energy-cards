@@ -28,15 +28,20 @@
  *                             # as kwp. Needs a *separate* entity from the energy sensor above, since power
  *                             # (instantaneous) and energy (cumulative) are different measurements — HA only
  *                             # computes meaningful min/mean/max statistics for the former.
- *   temperature_entity: sensor.aussentemperatur # optional, only for "wp": outdoor temperature sensor — draws a
- *                             # connected line (current year only) on its own right-hand °C axis (which, unlike
- *                             # kW, has a real negative-capable min/max range).
- *   temp_mode: daily         # optional, only for "wp" with temperature_entity set: daily | minmax | mean
+ *   temperature_entity: sensor.aussentemperatur # optional, only for "wp"/"klima": outdoor temperature sensor —
+ *                             # draws a connected line (current year only) on its own right-hand °C axis (which,
+ *                             # unlike kW, has a real negative-capable min/max range).
+ *   temp_mode: daily         # optional, only with temperature_entity set: daily | minmax | mean
  *                             # "daily" is one point per calendar day; auto-degrades to "minmax" (monthly
  *                             # min/max band + mean line) below ~500px card width, then to "mean" (plain
  *                             # monthly average line) below ~280px — no re-fetch needed, computed client-side
  *                             # from the same daily data. "minmax"/"mean" can also be set explicitly.
  *   color_temp: "#0ea5e9"   # optional, temperature line color (default: sky blue)
+ *   distance_entity: sensor.auto_odometer # optional, only for "wallbox": odometer/trip sensor — draws a
+ *                             # connected line (current year only) for km driven per month, on its own
+ *                             # right-hand km axis. Monthly sum (like the wallbox energy sensor itself),
+ *                             # not mean/min/max — distance driven doesn't have a meaningful sub-monthly range.
+ *   color_distance: "#84cc16" # optional, distance line color (default: lime green)
  *
  * Added via the UI ("Add Card" → "Energy Card by Lutarym"); the card type
  * plus optional overrides can be chosen conveniently in the visual editor.
@@ -79,6 +84,8 @@ const I18N = {
     tempModeDaily: 'Daily',
     tempModeMinMax: 'Monthly min/max range',
     tempModeMean: 'Monthly average',
+    editorDistanceEntity: 'Distance driven entity',
+    editorDistanceEntityHint: 'Optional — odometer/trip sensor, shows a line for km driven per month',
     sectionColors: 'Colors',
     colorCurrentYear: 'Current year',
     colorCurrentYearHint: 'Default for "{preset}": {color}',
@@ -134,6 +141,8 @@ const I18N = {
     tempModeDaily: 'Täglich',
     tempModeMinMax: 'Monatlicher Min/Max-Bereich',
     tempModeMean: 'Monatlicher Durchschnitt',
+    editorDistanceEntity: 'Kilometer-Entity',
+    editorDistanceEntityHint: 'Optional — Kilometerstand-/Fahrten-Sensor, zeigt eine Linie für gefahrene km pro Monat',
     sectionColors: 'Farben',
     colorCurrentYear: 'Aktuelles Jahr',
     colorCurrentYearHint: 'Standard für "{preset}": {color}',
@@ -252,6 +261,7 @@ const PRESETS = {
     fixedMax:   null,
     aggregate:  'sum',
     valueSuffix: '',
+    supportsDistanceLine: true, // this preset offers the optional "km driven" line overlay
   },
   wp: {
     entity:     'sensor.waermepumpe',
@@ -273,6 +283,7 @@ const PRESETS = {
     fixedMax:   null,
     aggregate:  'sum',
     valueSuffix: '',
+    supportsTemperatureLine: true, // same mechanism as wp — more AC use tends to track hotter months
   },
   akku: {
     entity:     'sensor.akku_ladezustand',
@@ -313,6 +324,7 @@ class LutarymEnergyCard extends HTMLElement {
     //  - 'mean' | 'minmax': per year, Array[12] of {mean, min, max} (°C)
     this._temperatureDaily   = [];
     this._temperatureMonthly = [];
+    this._distanceData = []; // per year: Array[12] of monthly km driven, only when a distance entity is configured
     this._loading   = true;
     this._error     = null;
     this._lastFetch = 0;
@@ -363,6 +375,10 @@ class LutarymEnergyCard extends HTMLElement {
     const newTemperatureEntity = (preset.supportsTemperatureLine && config.temperature_entity) ? config.temperature_entity : '';
     const TEMP_MODES = ['daily', 'minmax', 'mean'];
     const newTempMode = TEMP_MODES.includes(config.temp_mode) ? config.temp_mode : 'daily';
+    // Distance driven — a cumulative counter like the energy sensor itself,
+    // so it's fetched the same way ('change'/sum per month), only meaningful
+    // for supportsDistanceLine presets.
+    const newDistanceEntity = (preset.supportsDistanceLine && config.distance_entity) ? config.distance_entity : '';
     const entityOrTypeChanged =
       !this._config ||
       this._config.card_type !== cardType ||
@@ -370,6 +386,7 @@ class LutarymEnergyCard extends HTMLElement {
       this._config.powerEntity !== newPowerEntity ||
       this._config.temperatureEntity !== newTemperatureEntity ||
       this._config.tempMode !== newTempMode ||
+      this._config.distanceEntity !== newDistanceEntity ||
       this._config.yearsBack !== newYearsBack ||
       this._config.statMode !== newStatMode;
 
@@ -379,12 +396,14 @@ class LutarymEnergyCard extends HTMLElement {
       powerEntity: newPowerEntity, // optional second entity (instantaneous power) for the peak-power markers
       temperatureEntity: newTemperatureEntity, // optional second entity (outdoor temp) for the temperature line
       tempMode:   newTempMode, // 'daily' | 'minmax' | 'mean' — how the temperature line is aggregated
+      distanceEntity: newDistanceEntity, // optional second entity (km driven) for the distance line
       title:      config.title      ?? info.title,
       color:      config.color      ?? preset.color,
       colorPrev:  config.color_prev ?? preset.colorPrev,
       colorText:  config.color_text ?? null,   // null = follows theme (var(--primary-text-color))
       colorDim:   config.color_dim  ?? null,   // null = automatically derived muted color
       colorTemp:  config.color_temp ?? '#0ea5e9', // outdoor-temperature line color
+      colorDistance: config.color_distance ?? '#84cc16', // distance-driven line color
       appearance: config.appearance ?? 'auto', // 'auto' | 'light' | 'dark'
       titleFontSize: Number(config.title_font_size) || 14,
       labelFontSize: config.label_font_size ? Number(config.label_font_size) : null, // null = automatic (responsive)
@@ -575,6 +594,28 @@ class LutarymEnergyCard extends HTMLElement {
     });
   }
 
+  // Monthly distance driven — a cumulative counter (odometer-style), so
+  // 'change' (like the wallbox energy sensor itself) is the meaningful
+  // monthly statistic here, not mean/min/max.
+  async _fetchDistance(year) {
+    const entity = this._config.distanceEntity;
+    const wsRequest = {
+      type:          'recorder/statistics_during_period',
+      start_time:    new Date(year, 0, 1).toISOString(),
+      end_time:      new Date(year + 1, 0, 1).toISOString(),
+      statistic_ids: [entity],
+      period:        'month',
+      types:         ['change'],
+      units:         { length: 'km' }, // normalize regardless of whether the entity reports km, mi, ...
+    };
+    const result = await this._hass.callWS(wsRequest);
+    const stats = result?.[entity] ?? [];
+    return Array.from({ length: 12 }, (_, month) => {
+      const entry = stats.find(s => new Date(s.start).getMonth() === month);
+      return entry?.change ?? null;
+    });
+  }
+
   // Monthly outdoor temperature — mean, min and max together (used by both
   // the 'mean' and 'minmax' display modes, so one query covers both; which
   // fields actually get drawn is a rendering choice, not a fetch choice).
@@ -657,6 +698,12 @@ class LutarymEnergyCard extends HTMLElement {
         this._peakPowerData = await Promise.all(years.map(y => this._fetchPeakPower(y)));
       } else {
         this._peakPowerData = [];
+      }
+
+      if (this._preset.supportsDistanceLine && this._config.distanceEntity) {
+        this._distanceData = await Promise.all(years.map(y => this._fetchDistance(y)));
+      } else {
+        this._distanceData = [];
       }
 
       this._temperatureDaily   = [];
@@ -847,6 +894,7 @@ class LutarymEnergyCard extends HTMLElement {
     const kwp = (this._preset.supportsCapacityLine && this._config.kwp) ? this._config.kwp : null;
     const hasPeakPower = !!(this._preset.supportsPeakPower && this._config.powerEntity);
     const hasTemperature = !!(this._preset.supportsTemperatureLine && this._config.temperatureEntity);
+    const hasDistance = !!(this._preset.supportsDistanceLine && this._config.distanceEntity);
     // Graceful degradation: daily resolution needs real width, or it turns
     // into an illegible smear of ~365 points. Falls back to a monthly
     // min/max band first, then — on very narrow cards, where even that gets
@@ -854,11 +902,12 @@ class LutarymEnergyCard extends HTMLElement {
     let tempMode = hasTemperature ? this._config.tempMode : null;
     if (tempMode === 'daily' && px < 500) tempMode = 'minmax';
     if (tempMode && tempMode !== 'mean' && px < 280) tempMode = 'mean';
-    // The kWp line and the peak-power markers are in kW/kWp; the outdoor-
-    // temperature line is in °C. Either way it's a genuinely different unit
-    // than the left axis, so they share one right-hand scale — kW/kWp and
-    // temperature never both apply to the same preset, so there's no clash.
-    const showRightAxis = kwp != null || hasPeakPower || hasTemperature;
+    // The kWp line, peak-power markers and distance-driven line are all
+    // 0-based (kW/kWp/km); the outdoor-temperature line is in °C and needs a
+    // real min too. Either way it's a different unit than the left axis, so
+    // they share one right-hand scale — none of these combine on one preset,
+    // so there's no clash between e.g. a kW scale and a km scale.
+    const showRightAxis = kwp != null || hasPeakPower || hasTemperature || hasDistance;
 
     const { monthStyle, barRatio } = lp;
     const H = this._effectiveChartHeight(lp.H, px);
@@ -936,10 +985,13 @@ class LutarymEnergyCard extends HTMLElement {
       const peakVals = hasPeakPower
         ? (this._peakPowerData || []).flat().filter(v => v != null && v >= 0)
         : [];
-      const candidates = kwp != null ? [...peakVals, kwp] : peakVals;
+      const distanceVals = hasDistance
+        ? (this._distanceData || []).flat().filter(v => v != null && v >= 0)
+        : [];
+      const candidates = kwp != null ? [...peakVals, kwp] : [...peakVals, ...distanceVals];
       rightMax = this._niceMax(candidates.length ? Math.max(...candidates) : (kwp || 1));
     }
-    // Maps a right-axis value (kW/kWp or °C) to its y coordinate.
+    // Maps a right-axis value (kW/kWp, km, or °C) to its y coordinate.
     const yForRight = v => pad.top + plotH - ((v - rightMin) / (rightMax - rightMin)) * plotH;
 
     const TICKS = px < 280 ? 4 : 5;
@@ -1069,7 +1121,7 @@ class LutarymEnergyCard extends HTMLElement {
     // the more specific/meaningful label for this preset); falls back to kW
     // when only peak-power markers are shown without a capacity line.
     let kwpLine = '';
-    const rightUnit = hasTemperature ? '°C' : (kwp != null ? 'kWp' : 'kW');
+    const rightUnit = hasTemperature ? '°C' : (kwp != null ? 'kWp' : (hasDistance ? 'km' : 'kW'));
     const unitLabelRight = showRightAxis
       ? `<text x="${(pad.left + plotW + 4).toFixed(1)}" y="${(pad.top - 10).toFixed(1)}" text-anchor="start" font-size="${fAxis}" fill="var(--secondary-text-color)">${rightUnit}</text>`
       : '';
@@ -1145,6 +1197,33 @@ class LutarymEnergyCard extends HTMLElement {
       }
     }
 
+    // Distance-driven line — current year only, same reasoning as the other
+    // second-entity overlays. Monthly sum (not mean/min/max — a car's
+    // distance driven doesn't have a meaningful "range" within the month the
+    // way temperature does, it's just a running total).
+    let distanceLine = '';
+    if (hasDistance) {
+      const dSeries = this._distanceData[lastIndex] || [];
+      const points = [];
+      for (let m = 0; m <= currentMonth; m++) {
+        const v = dSeries[m];
+        if (v == null) continue;
+        const cx = pad.left + m * slotW + slotW / 2;
+        points.push({ x: cx, y: yForRight(Math.max(v, 0)), v, m });
+      }
+      if (points.length) {
+        const pathD = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+        distanceLine += `<path d="${pathD}" fill="none" stroke="${this._config.colorDistance}" stroke-width="2"/>`;
+        points.forEach(p => {
+          const monthLabel = monthStyle === 'initial' ? MONTHS_INITIAL_L[p.m] : MONTHS_ABBR_L[p.m];
+          const tip = LutarymEnergyCard.escAttr(`${monthLabel} ${years[lastIndex]}: ${p.v.toFixed(0)} km`);
+          distanceLine += `<circle class="lut-tt" data-tooltip="${tip}" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="8" fill="transparent"/>`;
+          distanceLine += `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="2.5" fill="${this._config.colorDistance}"/>`;
+        });
+      }
+    }
+
+
     const axes = `
       <line x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top + plotH}" stroke="var(--secondary-text-color)" stroke-width="1"/>
       <line x1="${pad.left}" y1="${pad.top + plotH}" x2="${pad.left + plotW}" y2="${pad.top + plotH}" stroke="var(--secondary-text-color)" stroke-width="1"/>
@@ -1152,7 +1231,7 @@ class LutarymEnergyCard extends HTMLElement {
     `;
 
     return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:${H}px;display:block;">
-      ${grid}${bars}${kwpLine}${tempLine}${valLabels}${xLabels}${yLabels}${yLabelsRight}${unitLabel}${unitLabelRight}${axes}${legend}
+      ${grid}${bars}${kwpLine}${tempLine}${distanceLine}${valLabels}${xLabels}${yLabels}${yLabelsRight}${unitLabel}${unitLabelRight}${axes}${legend}
     </svg>`;
   }
 
@@ -1486,6 +1565,8 @@ class LutarymEnergyCardEditor extends HTMLElement {
     delete preserved.power_entity;
     delete preserved.temperature_entity;
     delete preserved.temp_mode;
+    delete preserved.distance_entity;
+    delete preserved.color_distance;
     delete preserved.color_temp;
     preserved.card_type = value;
 
@@ -1902,6 +1983,16 @@ class LutarymEnergyCardEditor extends HTMLElement {
         ] } },
         'temp_mode',
         this._config.temp_mode || 'daily',
+      ));
+    }
+
+    if (preset.supportsDistanceLine) {
+      form.appendChild(this._row(
+        t(hass, 'editorDistanceEntity'),
+        t(hass, 'editorDistanceEntityHint'),
+        { entity: {} },
+        'distance_entity',
+        this._config.distance_entity,
       ));
     }
 

@@ -7,10 +7,10 @@ A single card; the card type is chosen via a visual configuration form.
 The editor and the card itself are fully bilingual (German/English),
 following `hass.language` automatically.
 
-For heat pump energy, an optional outdoor-temperature entity can be set to
-draw a temperature line on its own right-hand °C scale (unlike kW, this
-axis has a real min *and* max, since winter months regularly go
-negative). The display resolution is chosen via `temp_mode`:
+For heat pump and air conditioning energy, an optional outdoor-temperature
+entity can be set to draw a temperature line on its own right-hand °C
+scale (unlike kW, this axis has a real min *and* max, since winter months
+regularly go negative). The display resolution is chosen via `temp_mode`:
 
 - `daily` (default) — one point per calendar day, matching what you'd see
   in Home Assistant's own history graph. Automatically simplifies to a
@@ -19,6 +19,12 @@ negative). The display resolution is chosen via `temp_mode`:
   extra network request.
 - `minmax` — a monthly min/max band plus a mean line, always.
 - `mean` — a plain monthly average line, always.
+
+For wallbox charging, an optional distance-driven entity (odometer or
+trip sensor) can be set to draw a line for km driven per month, on its
+own right-hand km scale — a monthly sum, like the wallbox energy sensor
+itself, since distance driven doesn't have a meaningful sub-monthly
+range the way temperature does.
 
 For PV yield, an optional installed capacity (kWp) can be set — this
 draws a dashed reference line across the chart, read against its own
@@ -76,9 +82,11 @@ show_values: true         # optional — the number above each bar (not the axis
 stat_mode: mean           # optional, only for "akku": mean | minmax (bar stays at 0, min/max as a whisker, no separate axis)
 kwp: 14.4                 # optional, only for "pv": installed capacity — draws a dashed reference line vs. a second right-hand kW scale
 power_entity: sensor.xyz  # optional, only for "pv": instantaneous power sensor — shows the monthly peak as a tick per bar
-temperature_entity: sensor.aussentemperatur # optional, only for "wp": outdoor temp — draws a temperature line
-temp_mode: daily          # optional, only for "wp" with temperature_entity: daily | minmax | mean (default: daily)
+temperature_entity: sensor.aussentemperatur # optional, only for "wp"/"klima": outdoor temp — draws a temperature line
+temp_mode: daily          # optional, only with temperature_entity: daily | minmax | mean (default: daily)
 color_temp: "#0ea5e9"     # optional, temperature line color (default: sky blue)
+distance_entity: sensor.auto_odometer # optional, only for "wallbox": odometer/trip sensor — draws a km-driven line
+color_distance: "#84cc16" # optional, distance line color (default: lime green)
 color: "#f59e0b"         # optional, main color for the current year
 color_prev: "#888888"    # optional, color for the immediate previous year
 color_text: "#1c1c1c"    # optional, text/value color (default: follows theme)
