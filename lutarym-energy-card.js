@@ -18,9 +18,9 @@
  *   label_font_size: 10    # optional, chart label font size in px (default: automatic)
  *   years_back: 1           # optional: 0 | 1 | 2 | 3 — additional previous years, 0 = current year only (default: 1)
  *   stat_mode: mean         # optional, only for presets with a range option (currently "akku"): mean | minmax
- *                            # "minmax" draws a floating bar per month from the monthly min to max value,
- *                            # with a tick marking the mean — more informative than a plain average for
- *                            # something like a battery state of charge.
+ *                            # "minmax" keeps the bar itself anchored at 0 (height = monthly mean, same as
+ *                            # every other card type) and overlays the monthly min/max as a whisker (a
+ *                            # vertical line with caps) read against a second, mirrored axis on the right.
  *
  * Added via the UI ("Add Card" → "Energy Card by Lutarym"); the card type
  * plus optional overrides can be chosen conveniently in the visual editor.
@@ -593,7 +593,11 @@ class LutarymEnergyCard extends HTMLElement {
 
     const px = this._width || 400;
     const lp = this._layoutParams(px);
-    const { pad, monthStyle, barRatio } = lp;
+    const rangeMode = this._isRangeMode();
+    // Range mode gets a mirrored scale on the right for the min/max whisker,
+    // so it needs extra room on that side compared to the other card types.
+    const pad = rangeMode ? { ...lp.pad, right: lp.pad.right + 34 } : lp.pad;
+    const { monthStyle, barRatio } = lp;
     const H = this._effectiveChartHeight(lp.H, px);
     const { fMonth, fAxis, fVal } = this._labelFontSizes(px, H, lp.H);
 
@@ -617,8 +621,6 @@ class LutarymEnergyCard extends HTMLElement {
     const colorDim  = this._config.colorDim || (this._config.color + '55');
     const colorText = this._config.colorText || 'var(--primary-text-color)';
 
-    const rangeMode = this._isRangeMode();
-
     // Max value: fixed (e.g. self-sufficiency/battery 0-100%) or dynamic across all series
     let maxVal;
     if (this._preset.fixedMax != null) {
@@ -632,12 +634,16 @@ class LutarymEnergyCard extends HTMLElement {
     }
 
     const TICKS = px < 280 ? 4 : 5;
-    let grid = '', yLabels = '';
+    let grid = '', yLabels = '', yLabelsRight = '';
     for (let i = 0; i <= TICKS; i++) {
       const v = (maxVal / TICKS) * i;
       const y = pad.top + plotH - (v / maxVal) * plotH;
       grid    += `<line x1="${pad.left}" y1="${y.toFixed(1)}" x2="${pad.left + plotW}" y2="${y.toFixed(1)}" stroke="var(--divider-color)" stroke-width="0.5" stroke-dasharray="4 3"/>`;
       yLabels += `<text x="${pad.left - 4}" y="${(y + 4).toFixed(1)}" text-anchor="end" font-size="${fAxis}" fill="var(--secondary-text-color)">${Number.isInteger(v) ? v : v.toFixed(1)}</text>`;
+      // Mirrored scale on the right — this is what the min/max whisker is read against.
+      if (rangeMode) {
+        yLabelsRight += `<text x="${(pad.left + plotW + 6).toFixed(1)}" y="${(y + 4).toFixed(1)}" text-anchor="start" font-size="${fAxis}" fill="var(--secondary-text-color)">${Number.isInteger(v) ? v : v.toFixed(1)}</text>`;
+      }
     }
 
     let bars = '', xLabels = '', valLabels = '';
@@ -667,35 +673,34 @@ class LutarymEnergyCard extends HTMLElement {
           ? (isCurrentMonthOfCurrentSeries ? this._config.color : colorDim)
           : this._seriesColor(s, N);
 
+        // The bar itself always starts at 0, exactly like every other card
+        // type — in range mode its height is the monthly mean. Min/max is a
+        // separate whisker overlay (read against the mirrored right axis),
+        // not a change to where the bar starts.
+        const primaryVal = rangeMode ? (val.mean ?? 0) : val;
+        const bH = Math.max((Math.max(primaryVal, 0) / maxVal) * plotH, 1);
+        const bY = pad.top + plotH - bH;
+        bars += `<rect x="${xBar.toFixed(1)}" y="${bY.toFixed(1)}" width="${barW.toFixed(1)}" height="${bH.toFixed(1)}" fill="${fill}" rx="2"/>`;
+
+        let labelY = bY - 3;
+
         if (rangeMode) {
-          // Floating bar from min to max, with a contrasting tick marking
-          // the mean — more informative for something like a battery
-          // state of charge than a single monthly average would be.
-          const minV = val.min ?? val.mean ?? 0;
-          const maxV = val.max ?? val.mean ?? 0;
-          const yTop    = pad.top + plotH - (Math.max(maxV, 0) / maxVal) * plotH;
-          const yBottom = pad.top + plotH - (Math.max(minV, 0) / maxVal) * plotH;
-          const bH = Math.max(yBottom - yTop, 2);
-          bars += `<rect x="${xBar.toFixed(1)}" y="${yTop.toFixed(1)}" width="${barW.toFixed(1)}" height="${bH.toFixed(1)}" fill="${fill}" rx="2"/>`;
+          const minV = val.min ?? primaryVal;
+          const maxV = val.max ?? primaryVal;
+          const yMin = pad.top + plotH - (Math.max(minV, 0) / maxVal) * plotH;
+          const yMax = pad.top + plotH - (Math.max(maxV, 0) / maxVal) * plotH;
+          const wx   = xBar + barW / 2;
+          const capW = Math.max(barW * 0.4, 5);
+          bars += `<line x1="${wx.toFixed(1)}" y1="${yMin.toFixed(1)}" x2="${wx.toFixed(1)}" y2="${yMax.toFixed(1)}" stroke="${colorText}" stroke-width="1.5"/>`;
+          bars += `<line x1="${(wx - capW / 2).toFixed(1)}" y1="${yMax.toFixed(1)}" x2="${(wx + capW / 2).toFixed(1)}" y2="${yMax.toFixed(1)}" stroke="${colorText}" stroke-width="1.5"/>`;
+          bars += `<line x1="${(wx - capW / 2).toFixed(1)}" y1="${yMin.toFixed(1)}" x2="${(wx + capW / 2).toFixed(1)}" y2="${yMin.toFixed(1)}" stroke="${colorText}" stroke-width="1.5"/>`;
+          // Keep the label clear of the whisker's top cap when max > mean.
+          labelY = Math.min(bY, yMax) - 3;
+        }
 
-          if (val.mean != null) {
-            const yMean = pad.top + plotH - (Math.max(val.mean, 0) / maxVal) * plotH;
-            bars += `<rect x="${xBar.toFixed(1)}" y="${(yMean - 1).toFixed(1)}" width="${barW.toFixed(1)}" height="2" fill="${colorText}" opacity="0.85"/>`;
-          }
-
-          // Value label (mean) only for the current year (otherwise too cluttered)
-          if (isCurrentSeries && fVal > 0 && val.mean != null) {
-            valLabels += `<text x="${(xBar + barW / 2).toFixed(1)}" y="${(yTop - 3).toFixed(1)}" text-anchor="middle" font-size="${fVal}" fill="${colorText}">${val.mean.toFixed(0)}${this._preset.valueSuffix}</text>`;
-          }
-        } else {
-          const bH = Math.max((val / maxVal) * plotH, 1);
-          const bY = pad.top + plotH - bH;
-          bars += `<rect x="${xBar.toFixed(1)}" y="${bY.toFixed(1)}" width="${barW.toFixed(1)}" height="${bH.toFixed(1)}" fill="${fill}" rx="2"/>`;
-
-          // Value label only for the current year (otherwise too cluttered with multiple years)
-          if (isCurrentSeries && fVal > 0 && val > 0) {
-            valLabels += `<text x="${(xBar + barW / 2).toFixed(1)}" y="${(bY - 3).toFixed(1)}" text-anchor="middle" font-size="${fVal}" fill="${colorText}">${val.toFixed(0)}${this._preset.valueSuffix}</text>`;
-          }
+        // Value label only for the current year (otherwise too cluttered with multiple years)
+        if (isCurrentSeries && fVal > 0 && primaryVal > 0) {
+          valLabels += `<text x="${(xBar + barW / 2).toFixed(1)}" y="${labelY.toFixed(1)}" text-anchor="middle" font-size="${fVal}" fill="${colorText}">${primaryVal.toFixed(0)}${this._preset.valueSuffix}</text>`;
         }
       }
 
@@ -725,13 +730,17 @@ class LutarymEnergyCard extends HTMLElement {
     }
 
     const unitLabel = `<text x="${(pad.left - 4).toFixed(1)}" y="${(pad.top - 10).toFixed(1)}" text-anchor="middle" font-size="${fAxis}" fill="var(--secondary-text-color)">${this._preset.unit}</text>`;
+    const unitLabelRight = rangeMode
+      ? `<text x="${(pad.left + plotW + 4).toFixed(1)}" y="${(pad.top - 10).toFixed(1)}" text-anchor="start" font-size="${fAxis}" fill="var(--secondary-text-color)">${this._preset.unit}</text>`
+      : '';
     const axes = `
       <line x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top + plotH}" stroke="var(--secondary-text-color)" stroke-width="1"/>
       <line x1="${pad.left}" y1="${pad.top + plotH}" x2="${pad.left + plotW}" y2="${pad.top + plotH}" stroke="var(--secondary-text-color)" stroke-width="1"/>
+      ${rangeMode ? `<line x1="${pad.left + plotW}" y1="${pad.top}" x2="${pad.left + plotW}" y2="${pad.top + plotH}" stroke="var(--secondary-text-color)" stroke-width="1"/>` : ''}
     `;
 
     return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:${H}px;display:block;">
-      ${grid}${bars}${valLabels}${xLabels}${yLabels}${unitLabel}${axes}${legend}
+      ${grid}${bars}${valLabels}${xLabels}${yLabels}${yLabelsRight}${unitLabel}${unitLabelRight}${axes}${legend}
     </svg>`;
   }
 

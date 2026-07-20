@@ -8,10 +8,11 @@ The editor and the card itself are fully bilingual (German/English),
 following `hass.language` automatically.
 
 For the battery state of charge, the monthly display can be switched
-between a plain average and a min/max range: a floating bar per month
-from the monthly minimum to maximum, with a tick marking the mean —
-usually more informative than an average alone, since a battery can sit
-at a high average while still cycling between very different levels.
+between a plain average and a min/max range: the bar itself always stays
+anchored at 0 (height = monthly mean, exactly like every other card
+type), with the monthly min/max overlaid as a whisker — a vertical line
+with caps — read against a second, mirrored scale on the right edge of
+the chart.
 
 ## Installation via HACS
 
@@ -39,7 +40,7 @@ the visual configuration form directly.
 type: custom:lutarym-energy-card
 card_type: pv            # autarkie | energy | pv | wallbox | wp | klima | akku
 years_back: 2             # optional: 0 | 1 | 2 | 3 — additional previous years (default: 1)
-stat_mode: mean           # optional, only for "akku": mean | minmax (min/max range with mean tick)
+stat_mode: mean           # optional, only for "akku": mean | minmax (bar stays at 0, min/max as a whisker vs. a second right-hand axis)
 color: "#f59e0b"         # optional, main color for the current year
 color_prev: "#888888"    # optional, color for the immediate previous year
 color_text: "#1c1c1c"    # optional, text/value color (default: follows theme)
