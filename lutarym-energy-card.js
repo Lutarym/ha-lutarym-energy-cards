@@ -20,7 +20,7 @@
  *   stat_mode: mean         # optional, only for presets with a range option (currently "akku"): mean | minmax
  *                            # "minmax" keeps the bar itself anchored at 0 (height = monthly mean, same as
  *                            # every other card type) and overlays the monthly min/max as a whisker (a
- *                            # vertical line with caps) read against a second, mirrored axis on the right.
+ *                            # vertical line with caps) on the same scale — same axis, no number label.
  *
  * Added via the UI ("Add Card" → "Energy Card by Lutarym"); the card type
  * plus optional overrides can be chosen conveniently in the visual editor.
@@ -594,9 +594,7 @@ class LutarymEnergyCard extends HTMLElement {
     const px = this._width || 400;
     const lp = this._layoutParams(px);
     const rangeMode = this._isRangeMode();
-    // Range mode gets a mirrored scale on the right for the min/max whisker,
-    // so it needs extra room on that side compared to the other card types.
-    const pad = rangeMode ? { ...lp.pad, right: lp.pad.right + 34 } : lp.pad;
+    const pad = lp.pad;
     const { monthStyle, barRatio } = lp;
     const H = this._effectiveChartHeight(lp.H, px);
     const { fMonth, fAxis, fVal } = this._labelFontSizes(px, H, lp.H);
@@ -634,16 +632,12 @@ class LutarymEnergyCard extends HTMLElement {
     }
 
     const TICKS = px < 280 ? 4 : 5;
-    let grid = '', yLabels = '', yLabelsRight = '';
+    let grid = '', yLabels = '';
     for (let i = 0; i <= TICKS; i++) {
       const v = (maxVal / TICKS) * i;
       const y = pad.top + plotH - (v / maxVal) * plotH;
       grid    += `<line x1="${pad.left}" y1="${y.toFixed(1)}" x2="${pad.left + plotW}" y2="${y.toFixed(1)}" stroke="var(--divider-color)" stroke-width="0.5" stroke-dasharray="4 3"/>`;
       yLabels += `<text x="${pad.left - 4}" y="${(y + 4).toFixed(1)}" text-anchor="end" font-size="${fAxis}" fill="var(--secondary-text-color)">${Number.isInteger(v) ? v : v.toFixed(1)}</text>`;
-      // Mirrored scale on the right — this is what the min/max whisker is read against.
-      if (rangeMode) {
-        yLabelsRight += `<text x="${(pad.left + plotW + 6).toFixed(1)}" y="${(y + 4).toFixed(1)}" text-anchor="start" font-size="${fAxis}" fill="var(--secondary-text-color)">${Number.isInteger(v) ? v : v.toFixed(1)}</text>`;
-      }
     }
 
     let bars = '', xLabels = '', valLabels = '';
@@ -675,14 +669,12 @@ class LutarymEnergyCard extends HTMLElement {
 
         // The bar itself always starts at 0, exactly like every other card
         // type — in range mode its height is the monthly mean. Min/max is a
-        // separate whisker overlay (read against the mirrored right axis),
-        // not a change to where the bar starts.
+        // separate whisker overlay on the same (left) axis, not a change to
+        // where the bar starts.
         const primaryVal = rangeMode ? (val.mean ?? 0) : val;
         const bH = Math.max((Math.max(primaryVal, 0) / maxVal) * plotH, 1);
         const bY = pad.top + plotH - bH;
         bars += `<rect x="${xBar.toFixed(1)}" y="${bY.toFixed(1)}" width="${barW.toFixed(1)}" height="${bH.toFixed(1)}" fill="${fill}" rx="2"/>`;
-
-        let labelY = bY - 3;
 
         if (rangeMode) {
           const minV = val.min ?? primaryVal;
@@ -694,13 +686,12 @@ class LutarymEnergyCard extends HTMLElement {
           bars += `<line x1="${wx.toFixed(1)}" y1="${yMin.toFixed(1)}" x2="${wx.toFixed(1)}" y2="${yMax.toFixed(1)}" stroke="${colorText}" stroke-width="1.5"/>`;
           bars += `<line x1="${(wx - capW / 2).toFixed(1)}" y1="${yMax.toFixed(1)}" x2="${(wx + capW / 2).toFixed(1)}" y2="${yMax.toFixed(1)}" stroke="${colorText}" stroke-width="1.5"/>`;
           bars += `<line x1="${(wx - capW / 2).toFixed(1)}" y1="${yMin.toFixed(1)}" x2="${(wx + capW / 2).toFixed(1)}" y2="${yMin.toFixed(1)}" stroke="${colorText}" stroke-width="1.5"/>`;
-          // Keep the label clear of the whisker's top cap when max > mean.
-          labelY = Math.min(bY, yMax) - 3;
-        }
-
-        // Value label only for the current year (otherwise too cluttered with multiple years)
-        if (isCurrentSeries && fVal > 0 && primaryVal > 0) {
-          valLabels += `<text x="${(xBar + barW / 2).toFixed(1)}" y="${labelY.toFixed(1)}" text-anchor="middle" font-size="${fVal}" fill="${colorText}">${primaryVal.toFixed(0)}${this._preset.valueSuffix}</text>`;
+          // No number label here — it read as belonging to the (black) whisker
+          // rather than the (colored) bar. The summary line above the chart
+          // already gives the exact Ø/min/max figures.
+        } else if (isCurrentSeries && fVal > 0 && primaryVal > 0) {
+          // Value label only for the current year (otherwise too cluttered with multiple years)
+          valLabels += `<text x="${(xBar + barW / 2).toFixed(1)}" y="${(bY - 3).toFixed(1)}" text-anchor="middle" font-size="${fVal}" fill="${colorText}">${primaryVal.toFixed(0)}${this._preset.valueSuffix}</text>`;
         }
       }
 
@@ -730,17 +721,13 @@ class LutarymEnergyCard extends HTMLElement {
     }
 
     const unitLabel = `<text x="${(pad.left - 4).toFixed(1)}" y="${(pad.top - 10).toFixed(1)}" text-anchor="middle" font-size="${fAxis}" fill="var(--secondary-text-color)">${this._preset.unit}</text>`;
-    const unitLabelRight = rangeMode
-      ? `<text x="${(pad.left + plotW + 4).toFixed(1)}" y="${(pad.top - 10).toFixed(1)}" text-anchor="start" font-size="${fAxis}" fill="var(--secondary-text-color)">${this._preset.unit}</text>`
-      : '';
     const axes = `
       <line x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top + plotH}" stroke="var(--secondary-text-color)" stroke-width="1"/>
       <line x1="${pad.left}" y1="${pad.top + plotH}" x2="${pad.left + plotW}" y2="${pad.top + plotH}" stroke="var(--secondary-text-color)" stroke-width="1"/>
-      ${rangeMode ? `<line x1="${pad.left + plotW}" y1="${pad.top}" x2="${pad.left + plotW}" y2="${pad.top + plotH}" stroke="var(--secondary-text-color)" stroke-width="1"/>` : ''}
     `;
 
     return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:${H}px;display:block;">
-      ${grid}${bars}${valLabels}${xLabels}${yLabels}${yLabelsRight}${unitLabel}${unitLabelRight}${axes}${legend}
+      ${grid}${bars}${valLabels}${xLabels}${yLabels}${unitLabel}${axes}${legend}
     </svg>`;
   }
 
