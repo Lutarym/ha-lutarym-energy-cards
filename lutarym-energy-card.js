@@ -671,10 +671,22 @@ class LutarymEnergyCard extends HTMLElement {
     // genuinely different unit than the left axis's kWh — so they share
     // one right-hand scale.
     const showRightAxis = kwp != null || hasPeakPower;
-    const pad = showRightAxis ? { ...lp.pad, right: lp.pad.right + 34 } : lp.pad;
+
     const { monthStyle, barRatio } = lp;
     const H = this._effectiveChartHeight(lp.H, px);
     const { fMonth, fAxis, fVal } = this._labelFontSizes(px, H, lp.H);
+
+    // Reserve enough right-hand margin for the longest label actually drawn
+    // there — a fixed pixel offset isn't enough since fAxis scales with card
+    // width/height (a wider card gets bigger axis text, which needs more
+    // room, or "14.4 kWp" clips and its trailing "p" silently disappears).
+    let pad = lp.pad;
+    if (showRightAxis) {
+      const kwpLabelChars = kwp != null ? `${kwp} kWp`.length : 0;
+      const rightChars = Math.max(kwpLabelChars, 4); // at least room for e.g. "100"
+      const rightExtra = Math.ceil(rightChars * fAxis * 0.62) + 10;
+      pad = { ...lp.pad, right: lp.pad.right + rightExtra };
+    }
 
     const W     = px;
     const plotW = W - pad.left - pad.right;
