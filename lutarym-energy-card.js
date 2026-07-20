@@ -28,6 +28,10 @@
  *                             # as kwp. Needs a *separate* entity from the energy sensor above, since power
  *                             # (instantaneous) and energy (cumulative) are different measurements — HA only
  *                             # computes meaningful min/mean/max statistics for the former.
+ *   temperature_entity: sensor.aussentemperatur # optional, only for "wp": outdoor temperature sensor — draws a
+ *                             # connected line (current year only) for the monthly mean temperature, on its own
+ *                             # right-hand °C axis (which, unlike kW, has a real negative-capable min/max range).
+ *   color_temp: "#0ea5e9"   # optional, temperature line color (default: sky blue)
  *
  * Added via the UI ("Add Card" → "Energy Card by Lutarym"); the card type
  * plus optional overrides can be chosen conveniently in the visual editor.
@@ -63,6 +67,8 @@ const I18N = {
     editorKwpHint: 'Optional — draws a reference line with its own scale on the right',
     editorPowerEntity: 'Power entity (kW)',
     editorPowerEntityHint: 'Optional — instantaneous power sensor, shows the monthly peak as a marker on each bar',
+    editorTemperatureEntity: 'Outdoor temperature entity',
+    editorTemperatureEntityHint: 'Optional — shows a line for the monthly mean outdoor temperature',
     sectionColors: 'Colors',
     colorCurrentYear: 'Current year',
     colorCurrentYearHint: 'Default for "{preset}": {color}',
@@ -111,6 +117,8 @@ const I18N = {
     editorKwpHint: 'Optional — zeichnet eine Referenzlinie mit eigener Skala rechts',
     editorPowerEntity: 'Leistungs-Entity (kW)',
     editorPowerEntityHint: 'Optional — Momentanleistungs-Sensor, zeigt die monatliche Spitze als Markierung auf jedem Balken',
+    editorTemperatureEntity: 'Außentemperatur-Entity',
+    editorTemperatureEntityHint: 'Optional — zeigt eine Linie für die monatliche mittlere Außentemperatur',
     sectionColors: 'Farben',
     colorCurrentYear: 'Aktuelles Jahr',
     colorCurrentYearHint: 'Standard für "{preset}": {color}',
@@ -239,6 +247,7 @@ const PRESETS = {
     fixedMax:   null,
     aggregate:  'sum',
     valueSuffix: '',
+    supportsTemperatureLine: true, // this preset offers the optional outdoor-temperature line overlay
   },
   klima: {
     entity:     'sensor.klimaanlage',
@@ -284,6 +293,7 @@ class LutarymEnergyCard extends HTMLElement {
     this._seriesYears = [];   // years, oldest first, last = current year
     this._seriesData  = [];   // per year: Array[12] of monthly values
     this._peakPowerData = []; // per year: Array[12] of monthly max power (kW), only when a power entity is configured
+    this._temperatureData = []; // per year: Array[12] of monthly mean outdoor temp (°C), only when a temperature entity is configured
     this._loading   = true;
     this._error     = null;
     this._lastFetch = 0;
@@ -329,11 +339,15 @@ class LutarymEnergyCard extends HTMLElement {
     // No default here either — this is a second, distinct entity (instantaneous power,
     // not the cumulative energy entity above), only meaningful for supportsPeakPower presets.
     const newPowerEntity = (preset.supportsPeakPower && config.power_entity) ? config.power_entity : '';
+    // Same reasoning for the outdoor-temperature line — a separate entity, only
+    // meaningful for supportsTemperatureLine presets.
+    const newTemperatureEntity = (preset.supportsTemperatureLine && config.temperature_entity) ? config.temperature_entity : '';
     const entityOrTypeChanged =
       !this._config ||
       this._config.card_type !== cardType ||
       this._config.entity !== newEntity ||
       this._config.powerEntity !== newPowerEntity ||
+      this._config.temperatureEntity !== newTemperatureEntity ||
       this._config.yearsBack !== newYearsBack ||
       this._config.statMode !== newStatMode;
 
@@ -341,11 +355,13 @@ class LutarymEnergyCard extends HTMLElement {
       card_type:  cardType,
       entity:     newEntity,
       powerEntity: newPowerEntity, // optional second entity (instantaneous power) for the peak-power markers
+      temperatureEntity: newTemperatureEntity, // optional second entity (outdoor temp) for the temperature line
       title:      config.title      ?? info.title,
       color:      config.color      ?? preset.color,
       colorPrev:  config.color_prev ?? preset.colorPrev,
       colorText:  config.color_text ?? null,   // null = follows theme (var(--primary-text-color))
       colorDim:   config.color_dim  ?? null,   // null = automatically derived muted color
+      colorTemp:  config.color_temp ?? '#0ea5e9', // outdoor-temperature line color
       appearance: config.appearance ?? 'auto', // 'auto' | 'light' | 'dark'
       titleFontSize: Number(config.title_font_size) || 14,
       labelFontSize: config.label_font_size ? Number(config.label_font_size) : null, // null = automatic (responsive)
@@ -536,6 +552,28 @@ class LutarymEnergyCard extends HTMLElement {
     });
   }
 
+  // Monthly mean outdoor temperature — a genuine time series (unlike the
+  // energy entity's cumulative sum), so 'mean' is the meaningful monthly
+  // statistic here.
+  async _fetchTemperature(year) {
+    const entity = this._config.temperatureEntity;
+    const wsRequest = {
+      type:          'recorder/statistics_during_period',
+      start_time:    new Date(year, 0, 1).toISOString(),
+      end_time:      new Date(year + 1, 0, 1).toISOString(),
+      statistic_ids: [entity],
+      period:        'month',
+      types:         ['mean'],
+      units:         { temperature: '°C' },
+    };
+    const result = await this._hass.callWS(wsRequest);
+    const stats = result?.[entity] ?? [];
+    return Array.from({ length: 12 }, (_, month) => {
+      const entry = stats.find(s => new Date(s.start).getMonth() === month);
+      return entry?.mean ?? null;
+    });
+  }
+
   async _fetchData() {
     this._loading = true;
     this._error   = null;
@@ -558,6 +596,12 @@ class LutarymEnergyCard extends HTMLElement {
       } else {
         this._peakPowerData = [];
       }
+
+      if (this._preset.supportsTemperatureLine && this._config.temperatureEntity) {
+        this._temperatureData = await Promise.all(years.map(y => this._fetchTemperature(y)));
+      } else {
+        this._temperatureData = [];
+      }
     } catch (err) {
       console.error('[lutarym-energy-card]', err);
       this._error = err.message ?? t(this._hass, 'unknownError');
@@ -576,6 +620,19 @@ class LutarymEnergyCard extends HTMLElement {
       if (n * mag >= val) return n * mag;
     }
     return 10 * mag;
+  }
+
+  // Like _niceMax, but for axes that need an explicit min too (e.g. outdoor
+  // temperature, which regularly goes negative in winter) — pads a little
+  // and rounds both ends to the nearest 5.
+  _niceRange(minVal, maxVal) {
+    if (!Number.isFinite(minVal) || !Number.isFinite(maxVal)) return [0, 20];
+    const span = Math.max(maxVal - minVal, 2);
+    const pad  = Math.max(span * 0.15, 2);
+    let lo = Math.floor((minVal - pad) / 5) * 5;
+    let hi = Math.ceil((maxVal + pad) / 5) * 5;
+    if (lo === hi) { lo -= 5; hi += 5; }
+    return [lo, hi];
   }
 
   _layoutParams(px) {
@@ -720,10 +777,12 @@ class LutarymEnergyCard extends HTMLElement {
     const rangeMode = this._isRangeMode();
     const kwp = (this._preset.supportsCapacityLine && this._config.kwp) ? this._config.kwp : null;
     const hasPeakPower = !!(this._preset.supportsPeakPower && this._config.powerEntity);
-    // Both the kWp line and the peak-power markers are in kW/kWp — a
-    // genuinely different unit than the left axis's kWh — so they share
-    // one right-hand scale.
-    const showRightAxis = kwp != null || hasPeakPower;
+    const hasTemperature = !!(this._preset.supportsTemperatureLine && this._config.temperatureEntity);
+    // The kWp line and the peak-power markers are in kW/kWp; the outdoor-
+    // temperature line is in °C. Either way it's a genuinely different unit
+    // than the left axis, so they share one right-hand scale — kW/kWp and
+    // temperature never both apply to the same preset, so there's no clash.
+    const showRightAxis = kwp != null || hasPeakPower || hasTemperature;
 
     const { monthStyle, barRatio } = lp;
     const H = this._effectiveChartHeight(lp.H, px);
@@ -736,7 +795,7 @@ class LutarymEnergyCard extends HTMLElement {
     let pad = lp.pad;
     if (showRightAxis) {
       const kwpLabelChars = kwp != null ? String(kwp).length : 0;
-      const rightChars = Math.max(kwpLabelChars, 5); // room for tick labels like "17.5" too
+      const rightChars = Math.max(kwpLabelChars, 5); // room for tick labels like "17.5" or "-10" too
       const rightExtra = Math.ceil(rightChars * fAxis * 0.62) + 10;
       pad = { ...lp.pad, right: lp.pad.right + rightExtra };
     }
@@ -773,17 +832,23 @@ class LutarymEnergyCard extends HTMLElement {
       maxVal = this._niceMax(allVals.length ? Math.max(...allVals) : 0);
     }
 
-    // Right-axis (kW) scale — covers both the static kWp line and the
-    // measured monthly peaks, so a peak that slightly exceeds the nameplate
-    // capacity (e.g. brief overproduction) still fits on the axis.
-    let rightMax = null;
-    if (showRightAxis) {
+    // Right-axis scale. For kWp/peak-power it's 0-based (covers the static
+    // kWp line and the measured monthly peaks, so a peak that slightly
+    // exceeds the nameplate capacity still fits). For outdoor temperature it
+    // needs a real min too, since winter months regularly go negative.
+    let rightMin = 0, rightMax = null;
+    if (hasTemperature) {
+      const tVals = (this._temperatureData || []).flat().filter(v => v != null);
+      [rightMin, rightMax] = tVals.length ? this._niceRange(Math.min(...tVals), Math.max(...tVals)) : [-10, 20];
+    } else if (showRightAxis) {
       const peakVals = hasPeakPower
         ? (this._peakPowerData || []).flat().filter(v => v != null && v >= 0)
         : [];
       const candidates = kwp != null ? [...peakVals, kwp] : peakVals;
       rightMax = this._niceMax(candidates.length ? Math.max(...candidates) : (kwp || 1));
     }
+    // Maps a right-axis value (kW/kWp or °C) to its y coordinate.
+    const yForRight = v => pad.top + plotH - ((v - rightMin) / (rightMax - rightMin)) * plotH;
 
     const TICKS = px < 280 ? 4 : 5;
     let grid = '', yLabels = '', yLabelsRight = '';
@@ -795,8 +860,8 @@ class LutarymEnergyCard extends HTMLElement {
     }
     if (showRightAxis) {
       for (let i = 0; i <= TICKS; i++) {
-        const v = (rightMax / TICKS) * i;
-        const y = pad.top + plotH - (v / rightMax) * plotH;
+        const v = rightMin + ((rightMax - rightMin) / TICKS) * i;
+        const y = yForRight(v);
         yLabelsRight += `<text x="${(pad.left + plotW + 6).toFixed(1)}" y="${(y + 4).toFixed(1)}" text-anchor="start" font-size="${fAxis}" fill="var(--secondary-text-color)">${Number.isInteger(v) ? v : v.toFixed(1)}</text>`;
       }
     }
@@ -869,7 +934,7 @@ class LutarymEnergyCard extends HTMLElement {
         if (hasPeakPower) {
           const peakVal = this._peakPowerData[s] ? this._peakPowerData[s][m] : null;
           if (peakVal != null) {
-            const yPeak = pad.top + plotH - (Math.min(Math.max(peakVal, 0), rightMax) / rightMax) * plotH;
+            const yPeak = yForRight(Math.min(Math.max(peakVal, 0), rightMax));
             const tickW = Math.max(barW * 0.6, 5);
             const tx = xBar + barW / 2;
             const peakTooltip = LutarymEnergyCard.escAttr(`${barMonthLabel} ${years[s]}: Peak ${peakVal.toFixed(1)} kW`);
@@ -912,7 +977,7 @@ class LutarymEnergyCard extends HTMLElement {
     // the more specific/meaningful label for this preset); falls back to kW
     // when only peak-power markers are shown without a capacity line.
     let kwpLine = '';
-    const rightUnit = kwp != null ? 'kWp' : 'kW';
+    const rightUnit = hasTemperature ? '°C' : (kwp != null ? 'kWp' : 'kW');
     const unitLabelRight = showRightAxis
       ? `<text x="${(pad.left + plotW + 4).toFixed(1)}" y="${(pad.top - 10).toFixed(1)}" text-anchor="start" font-size="${fAxis}" fill="var(--secondary-text-color)">${rightUnit}</text>`
       : '';
@@ -920,13 +985,39 @@ class LutarymEnergyCard extends HTMLElement {
       ? `<line x1="${(pad.left + plotW).toFixed(1)}" y1="${pad.top}" x2="${(pad.left + plotW).toFixed(1)}" y2="${(pad.top + plotH).toFixed(1)}" stroke="var(--secondary-text-color)" stroke-width="1"/>`
       : '';
     if (kwp != null) {
-      const yKwp = pad.top + plotH - (Math.min(kwp, rightMax) / rightMax) * plotH;
+      const yKwp = yForRight(Math.min(kwp, rightMax));
       // No unit suffix here — the axis unit label above already says "kWp",
       // repeating it on every line/value would just be noise.
       kwpLine = `
         <line x1="${pad.left}" y1="${yKwp.toFixed(1)}" x2="${(pad.left + plotW).toFixed(1)}" y2="${yKwp.toFixed(1)}" stroke="${colorText}" stroke-width="1" stroke-dasharray="5 3" opacity="0.85"/>
         <text x="${(pad.left + plotW + 6).toFixed(1)}" y="${(yKwp - 4).toFixed(1)}" text-anchor="start" font-size="${fAxis}" fill="${colorText}">${kwp}</text>
       `;
+    }
+
+    // Outdoor-temperature line — current year only (comparing several years'
+    // temperature lines against several years' bars gets visually busy fast;
+    // the summary line already exists for cross-year comparison elsewhere).
+    let tempLine = '';
+    if (hasTemperature) {
+      const tSeries = this._temperatureData[lastIndex] || [];
+      const points = [];
+      for (let m = 0; m <= currentMonth; m++) {
+        const v = tSeries[m];
+        if (v == null) continue;
+        const cx = pad.left + m * slotW + slotW / 2;
+        points.push({ x: cx, y: yForRight(v), v, m });
+      }
+      if (points.length) {
+        const pathD = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+        tempLine += `<path d="${pathD}" fill="none" stroke="${this._config.colorTemp}" stroke-width="2"/>`;
+        points.forEach(p => {
+          const monthLabel = monthStyle === 'initial' ? MONTHS_INITIAL_L[p.m] : MONTHS_ABBR_L[p.m];
+          const tip = LutarymEnergyCard.escAttr(`${monthLabel} ${years[lastIndex]}: ${p.v.toFixed(1)}°C`);
+          // Invisible larger hit circle + small visible dot, same pattern as elsewhere.
+          tempLine += `<circle class="lut-tt" data-tooltip="${tip}" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="8" fill="transparent"/>`;
+          tempLine += `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="2.5" fill="${this._config.colorTemp}"/>`;
+        });
+      }
     }
 
     const axes = `
@@ -936,7 +1027,7 @@ class LutarymEnergyCard extends HTMLElement {
     `;
 
     return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:${H}px;display:block;">
-      ${grid}${bars}${kwpLine}${valLabels}${xLabels}${yLabels}${yLabelsRight}${unitLabel}${unitLabelRight}${axes}${legend}
+      ${grid}${bars}${kwpLine}${tempLine}${valLabels}${xLabels}${yLabels}${yLabelsRight}${unitLabel}${unitLabelRight}${axes}${legend}
     </svg>`;
   }
 
@@ -1268,6 +1359,8 @@ class LutarymEnergyCardEditor extends HTMLElement {
     delete preserved.stat_mode;
     delete preserved.kwp;
     delete preserved.power_entity;
+    delete preserved.temperature_entity;
+    delete preserved.color_temp;
     preserved.card_type = value;
 
     this._config = preserved;
@@ -1662,6 +1755,16 @@ class LutarymEnergyCardEditor extends HTMLElement {
         { entity: {} },
         'power_entity',
         this._config.power_entity,
+      ));
+    }
+
+    if (preset.supportsTemperatureLine) {
+      form.appendChild(this._row(
+        t(hass, 'editorTemperatureEntity'),
+        t(hass, 'editorTemperatureEntityHint'),
+        { entity: {} },
+        'temperature_entity',
+        this._config.temperature_entity,
       ));
     }
 

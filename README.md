@@ -7,6 +7,11 @@ A single card; the card type is chosen via a visual configuration form.
 The editor and the card itself are fully bilingual (German/English),
 following `hass.language` automatically.
 
+For heat pump energy, an optional outdoor-temperature entity can be set to
+draw a connected line (current year only) for the monthly mean outdoor
+temperature, on its own right-hand °C scale — unlike kW, this axis has a
+real min *and* max, since winter months regularly go negative.
+
 For PV yield, an optional installed capacity (kWp) can be set — this
 draws a dashed reference line across the chart, read against its own
 scale on the right (kW isn't the same unit as the kWh bars, so a
@@ -63,6 +68,8 @@ show_values: true         # optional — the number above each bar (not the axis
 stat_mode: mean           # optional, only for "akku": mean | minmax (bar stays at 0, min/max as a whisker, no separate axis)
 kwp: 14.4                 # optional, only for "pv": installed capacity — draws a dashed reference line vs. a second right-hand kW scale
 power_entity: sensor.xyz  # optional, only for "pv": instantaneous power sensor — shows the monthly peak as a tick per bar
+temperature_entity: sensor.aussentemperatur # optional, only for "wp": outdoor temp — draws a mean-temperature line
+color_temp: "#0ea5e9"     # optional, temperature line color (default: sky blue)
 color: "#f59e0b"         # optional, main color for the current year
 color_prev: "#888888"    # optional, color for the immediate previous year
 color_text: "#1c1c1c"    # optional, text/value color (default: follows theme)
