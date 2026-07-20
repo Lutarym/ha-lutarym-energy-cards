@@ -1027,6 +1027,7 @@ class LutarymEnergyCard extends HTMLElement {
           display: block;
           width: 100%;
           height: 100%;
+          min-width: 0;
           box-sizing: border-box;
           ${this._appearanceCSSVars()}
         }
@@ -1036,6 +1037,7 @@ class LutarymEnergyCard extends HTMLElement {
           display: flex;
           flex-direction: column;
           box-sizing: border-box;
+          min-width: 0;
         }
         .card-header {
           padding: 14px 14px 2px;
@@ -1044,21 +1046,25 @@ class LutarymEnergyCard extends HTMLElement {
           letter-spacing: 0.02em;
           color: var(--primary-text-color);
           flex-shrink: 0;
+          min-width: 0;
         }
         .totals {
           display: flex;
-          gap: 16px;
+          flex-wrap: wrap;
+          gap: 4px 16px;
           padding: 6px 14px 8px;
           font-size: 12px;
           color: var(--secondary-text-color);
           flex-shrink: 0;
+          min-width: 0;
         }
-        .tot-item { display: flex; align-items: center; gap: 5px; }
+        .tot-item { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
         .dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; flex-shrink: 0; }
         .chart-wrap {
           padding: 0 6px 10px;
           flex: 1 1 auto;
           min-height: 0;
+          min-width: 0;
         }
         .loading {
           padding: 28px 14px;
