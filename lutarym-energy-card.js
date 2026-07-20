@@ -561,7 +561,16 @@ class LutarymEnergyCard extends HTMLElement {
     const result = await this._hass.callWS(wsRequest);
     const stats = result?.[this._config.entity] ?? [];
     return Array.from({ length: 12 }, (_, month) => {
-      const entry = stats.find(s => new Date(s.start).getMonth() === month);
+      // WICHTIG: sowohl Monat als auch Jahr prüfen, nicht nur Monat -
+      // sonst kann bei einer inklusiven end_time-Grenze der Recorder-API
+      // der Januar-Eintrag des FOLGEJAHRS versehentlich in die Abfrage
+      // dieses Jahres hineinrutschen und von .find() fälschlich für
+      // Monat 0 (Januar) genommen werden. Symptom war: Januar zeigte in
+      // allen Kartentypen für JEDES Jahr denselben (falschen) Wert.
+      const entry = stats.find(s => {
+        const d = new Date(s.start);
+        return d.getMonth() === month && d.getFullYear() === year;
+      });
       if (!entry) return null;
       if (rangeMode) {
         if (entry.min == null && entry.max == null && entry.mean == null) return null;
@@ -589,7 +598,10 @@ class LutarymEnergyCard extends HTMLElement {
     const result = await this._hass.callWS(wsRequest);
     const stats = result?.[entity] ?? [];
     return Array.from({ length: 12 }, (_, month) => {
-      const entry = stats.find(s => new Date(s.start).getMonth() === month);
+      const entry = stats.find(s => {
+        const d = new Date(s.start);
+        return d.getMonth() === month && d.getFullYear() === year;
+      });
       return entry?.max ?? null;
     });
   }
@@ -611,7 +623,10 @@ class LutarymEnergyCard extends HTMLElement {
     const result = await this._hass.callWS(wsRequest);
     const stats = result?.[entity] ?? [];
     return Array.from({ length: 12 }, (_, month) => {
-      const entry = stats.find(s => new Date(s.start).getMonth() === month);
+      const entry = stats.find(s => {
+        const d = new Date(s.start);
+        return d.getMonth() === month && d.getFullYear() === year;
+      });
       return entry?.change ?? null;
     });
   }
@@ -633,7 +648,10 @@ class LutarymEnergyCard extends HTMLElement {
     const result = await this._hass.callWS(wsRequest);
     const stats = result?.[entity] ?? [];
     return Array.from({ length: 12 }, (_, month) => {
-      const entry = stats.find(s => new Date(s.start).getMonth() === month);
+      const entry = stats.find(s => {
+        const d = new Date(s.start);
+        return d.getMonth() === month && d.getFullYear() === year;
+      });
       if (!entry) return null;
       return { mean: entry.mean ?? null, min: entry.min ?? null, max: entry.max ?? null };
     });
