@@ -29,6 +29,10 @@ with caps, on the same scale as the bar. No separate number label in
 range mode; the exact Ø/min/max figures are in the summary line above
 the chart.
 
+Hovering a bar with the mouse shows a small tooltip with month, year, and
+the exact value (Ø with min/max range in the akku min/max mode; peak
+power ticks on the pv preset show their own value too).
+
 ## Installation via HACS
 
 1. HACS → Frontend → **⋮** → Custom repositories

@@ -793,7 +793,15 @@ class LutarymEnergyCard extends HTMLElement {
         const primaryVal = rangeMode ? (val.mean ?? 0) : val;
         const bH = Math.max((Math.max(primaryVal, 0) / maxVal) * plotH, 1);
         const bY = pad.top + plotH - bH;
-        bars += `<rect x="${xBar.toFixed(1)}" y="${bY.toFixed(1)}" width="${barW.toFixed(1)}" height="${bH.toFixed(1)}" fill="${fill}" rx="2"/>`;
+        const barMonthLabel = monthStyle === 'initial' ? MONTHS_INITIAL_L[m] : MONTHS_ABBR_L[m];
+        const barTooltip = LutarymEnergyCard.escAttr(this._tooltipText(barMonthLabel, years[s], val));
+        // Invisible full-height hit area so hovering the empty space above a
+        // short bar still shows the tooltip. It sits BEHIND the visible bar,
+        // which is opaque and would otherwise swallow the pointer events over
+        // its own area — so the visible bar carries the same class/tooltip
+        // too, making the whole column one seamless hover target.
+        bars += `<rect class="lut-tt" data-tooltip="${barTooltip}" x="${xBar.toFixed(1)}" y="${pad.top.toFixed(1)}" width="${barW.toFixed(1)}" height="${plotH.toFixed(1)}" fill="transparent"/>`;
+        bars += `<rect class="lut-tt" data-tooltip="${barTooltip}" x="${xBar.toFixed(1)}" y="${bY.toFixed(1)}" width="${barW.toFixed(1)}" height="${bH.toFixed(1)}" fill="${fill}" rx="2"/>`;
 
         if (rangeMode) {
           const minV = val.min ?? primaryVal;
@@ -807,7 +815,8 @@ class LutarymEnergyCard extends HTMLElement {
           bars += `<line x1="${(wx - capW / 2).toFixed(1)}" y1="${yMin.toFixed(1)}" x2="${(wx + capW / 2).toFixed(1)}" y2="${yMin.toFixed(1)}" stroke="${colorText}" stroke-width="1.5"/>`;
           // No number label here — it read as belonging to the (black) whisker
           // rather than the (colored) bar. The summary line above the chart
-          // already gives the exact Ø/min/max figures.
+          // already gives the exact Ø/min/max figures — and now the hover
+          // tooltip on the bar itself does too.
         } else if (this._config.showValues && isCurrentSeries && fVal > 0 && primaryVal > 0) {
           // Value label only for the current year (otherwise too cluttered with multiple years)
           valLabels += `<text x="${(xBar + barW / 2).toFixed(1)}" y="${(bY - 3).toFixed(1)}" text-anchor="middle" font-size="${fVal}" fill="${colorText}">${primaryVal.toFixed(0)}${this._preset.valueSuffix}</text>`;
@@ -821,7 +830,10 @@ class LutarymEnergyCard extends HTMLElement {
             const yPeak = pad.top + plotH - (Math.min(Math.max(peakVal, 0), rightMax) / rightMax) * plotH;
             const tickW = Math.max(barW * 0.6, 5);
             const tx = xBar + barW / 2;
-            bars += `<line x1="${(tx - tickW / 2).toFixed(1)}" y1="${yPeak.toFixed(1)}" x2="${(tx + tickW / 2).toFixed(1)}" y2="${yPeak.toFixed(1)}" stroke="${colorText}" stroke-width="2" stroke-linecap="round"/>`;
+            const peakTooltip = LutarymEnergyCard.escAttr(`${barMonthLabel} ${years[s]}: Peak ${peakVal.toFixed(1)} kW`);
+            // Invisible wider hit line — the visible tick stays the same thin 2px mark.
+            bars += `<line class="lut-tt" data-tooltip="${peakTooltip}" x1="${(tx - tickW / 2).toFixed(1)}" y1="${yPeak.toFixed(1)}" x2="${(tx + tickW / 2).toFixed(1)}" y2="${yPeak.toFixed(1)}" stroke="transparent" stroke-width="12" stroke-linecap="round"/>`;
+            bars += `<line x1="${(tx - tickW / 2).toFixed(1)}" y1="${yPeak.toFixed(1)}" x2="${(tx + tickW / 2).toFixed(1)}" y2="${yPeak.toFixed(1)}" stroke="${colorText}" stroke-width="2" stroke-linecap="round" class="lut-tt" data-tooltip="${peakTooltip}"/>`;
           }
         }
       }
@@ -948,6 +960,34 @@ class LutarymEnergyCard extends HTMLElement {
     return `${val.toFixed(0)} ${unit}`;
   }
 
+  // Single-value formatter shared by the hover tooltip — same style as the
+  // in-chart bar labels and the summary line (suffix directly attached for
+  // %, space-separated unit for kWh etc.).
+  _formatValue(v) {
+    if (v == null) return '–';
+    const suffix = this._preset.valueSuffix;
+    return suffix ? `${v.toFixed(0)}${suffix}` : `${v.toFixed(0)} ${this._preset.unit}`;
+  }
+
+  // Hover-tooltip text for one bar: month + year + value, or month + year +
+  // Ø(min–max) in range mode.
+  _tooltipText(monthLabel, year, val) {
+    if (this._isRangeMode() && val && typeof val === 'object') {
+      const meanStr = val.mean != null ? this._formatValue(val.mean) : '–';
+      if (val.min != null && val.max != null) {
+        const suffix = this._preset.valueSuffix;
+        return `${monthLabel} ${year}: Ø ${meanStr} (${val.min.toFixed(0)}–${val.max.toFixed(0)}${suffix})`;
+      }
+      return `${monthLabel} ${year}: Ø ${meanStr}`;
+    }
+    return `${monthLabel} ${year}: ${this._formatValue(val)}`;
+  }
+
+  // Minimal escaping for text placed inside an HTML attribute.
+  static escAttr(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
   // ── Render ────────────────────────────────────────────────────────────
 
   _render() {
@@ -1031,16 +1071,67 @@ class LutarymEnergyCard extends HTMLElement {
           color: var(--error-color, red);
           font-size: 12px;
         }
+        .chart-wrap svg .lut-tt {
+          cursor: pointer;
+        }
+        .chart-wrap svg rect.lut-tt[fill]:not([fill="transparent"]):hover {
+          filter: brightness(1.15);
+        }
+        .lut-tooltip {
+          position: fixed;
+          left: 0;
+          top: 0;
+          pointer-events: none;
+          z-index: 9999;
+          background: var(--card-background-color, #1c1c1c);
+          color: var(--primary-text-color);
+          border: 1px solid var(--divider-color, #444);
+          border-radius: 6px;
+          padding: 4px 8px;
+          font-size: 12px;
+          white-space: nowrap;
+          opacity: 0;
+          transform: translate(-50%, calc(-100% - 10px));
+          transition: opacity 0.1s ease;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+        }
+        .lut-tooltip.visible {
+          opacity: 1;
+        }
       </style>
       <ha-card>
         <div class="card-header">${this._config.title}</div>
         ${body}
+        <div class="lut-tooltip" id="lutTooltip"></div>
       </ha-card>
     `;
 
     this.shadowRoot.querySelector('ha-card').addEventListener('dblclick', () => {
       this._lastFetch = 0;
       if (this._hass && this._config.entity) this._fetchData();
+    });
+
+    this._attachTooltipHandlers();
+  }
+
+  // Hover tooltips for bars/markers — attached fresh after every render
+  // since the SVG is fully rebuilt each time (same pattern as the dblclick
+  // handler above).
+  _attachTooltipHandlers() {
+    const tooltip = this.shadowRoot.getElementById('lutTooltip');
+    if (!tooltip) return;
+    this.shadowRoot.querySelectorAll('.lut-tt').forEach(el => {
+      el.addEventListener('pointerenter', () => {
+        tooltip.textContent = el.getAttribute('data-tooltip') || '';
+        tooltip.classList.add('visible');
+      });
+      el.addEventListener('pointermove', ev => {
+        tooltip.style.left = `${ev.clientX}px`;
+        tooltip.style.top = `${ev.clientY}px`;
+      });
+      el.addEventListener('pointerleave', () => {
+        tooltip.classList.remove('visible');
+      });
     });
   }
 
