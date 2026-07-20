@@ -29,8 +29,13 @@
  *                             # (instantaneous) and energy (cumulative) are different measurements — HA only
  *                             # computes meaningful min/mean/max statistics for the former.
  *   temperature_entity: sensor.aussentemperatur # optional, only for "wp": outdoor temperature sensor — draws a
- *                             # connected line (current year only) for the monthly mean temperature, on its own
- *                             # right-hand °C axis (which, unlike kW, has a real negative-capable min/max range).
+ *                             # connected line (current year only) on its own right-hand °C axis (which, unlike
+ *                             # kW, has a real negative-capable min/max range).
+ *   temp_mode: daily         # optional, only for "wp" with temperature_entity set: daily | minmax | mean
+ *                             # "daily" is one point per calendar day; auto-degrades to "minmax" (monthly
+ *                             # min/max band + mean line) below ~500px card width, then to "mean" (plain
+ *                             # monthly average line) below ~280px — no re-fetch needed, computed client-side
+ *                             # from the same daily data. "minmax"/"mean" can also be set explicitly.
  *   color_temp: "#0ea5e9"   # optional, temperature line color (default: sky blue)
  *
  * Added via the UI ("Add Card" → "Energy Card by Lutarym"); the card type
@@ -68,7 +73,12 @@ const I18N = {
     editorPowerEntity: 'Power entity (kW)',
     editorPowerEntityHint: 'Optional — instantaneous power sensor, shows the monthly peak as a marker on each bar',
     editorTemperatureEntity: 'Outdoor temperature entity',
-    editorTemperatureEntityHint: 'Optional — shows a line for the monthly mean outdoor temperature',
+    editorTemperatureEntityHint: 'Optional — shows a line for the outdoor temperature',
+    editorTempMode: 'Temperature display',
+    editorTempModeHint: 'Daily auto-simplifies to a min/max band, then to a plain average, on narrow cards',
+    tempModeDaily: 'Daily',
+    tempModeMinMax: 'Monthly min/max range',
+    tempModeMean: 'Monthly average',
     sectionColors: 'Colors',
     colorCurrentYear: 'Current year',
     colorCurrentYearHint: 'Default for "{preset}": {color}',
@@ -118,7 +128,12 @@ const I18N = {
     editorPowerEntity: 'Leistungs-Entity (kW)',
     editorPowerEntityHint: 'Optional — Momentanleistungs-Sensor, zeigt die monatliche Spitze als Markierung auf jedem Balken',
     editorTemperatureEntity: 'Außentemperatur-Entity',
-    editorTemperatureEntityHint: 'Optional — zeigt eine Linie für die monatliche mittlere Außentemperatur',
+    editorTemperatureEntityHint: 'Optional — zeigt eine Linie für die Außentemperatur',
+    editorTempMode: 'Temperatur-Darstellung',
+    editorTempModeHint: 'Täglich vereinfacht sich bei schmalen Karten automatisch zu Min/Max, dann zum reinen Durchschnitt',
+    tempModeDaily: 'Täglich',
+    tempModeMinMax: 'Monatlicher Min/Max-Bereich',
+    tempModeMean: 'Monatlicher Durchschnitt',
     sectionColors: 'Farben',
     colorCurrentYear: 'Aktuelles Jahr',
     colorCurrentYearHint: 'Standard für "{preset}": {color}',
@@ -293,7 +308,11 @@ class LutarymEnergyCard extends HTMLElement {
     this._seriesYears = [];   // years, oldest first, last = current year
     this._seriesData  = [];   // per year: Array[12] of monthly values
     this._peakPowerData = []; // per year: Array[12] of monthly max power (kW), only when a power entity is configured
-    this._temperatureData = []; // per year: Array[12] of monthly mean outdoor temp (°C), only when a temperature entity is configured
+    // Outdoor temperature — shape depends on temp_mode:
+    //  - 'daily': Array of {month, day, value} for the current year only
+    //  - 'mean' | 'minmax': per year, Array[12] of {mean, min, max} (°C)
+    this._temperatureDaily   = [];
+    this._temperatureMonthly = [];
     this._loading   = true;
     this._error     = null;
     this._lastFetch = 0;
@@ -342,12 +361,15 @@ class LutarymEnergyCard extends HTMLElement {
     // Same reasoning for the outdoor-temperature line — a separate entity, only
     // meaningful for supportsTemperatureLine presets.
     const newTemperatureEntity = (preset.supportsTemperatureLine && config.temperature_entity) ? config.temperature_entity : '';
+    const TEMP_MODES = ['daily', 'minmax', 'mean'];
+    const newTempMode = TEMP_MODES.includes(config.temp_mode) ? config.temp_mode : 'daily';
     const entityOrTypeChanged =
       !this._config ||
       this._config.card_type !== cardType ||
       this._config.entity !== newEntity ||
       this._config.powerEntity !== newPowerEntity ||
       this._config.temperatureEntity !== newTemperatureEntity ||
+      this._config.tempMode !== newTempMode ||
       this._config.yearsBack !== newYearsBack ||
       this._config.statMode !== newStatMode;
 
@@ -356,6 +378,7 @@ class LutarymEnergyCard extends HTMLElement {
       entity:     newEntity,
       powerEntity: newPowerEntity, // optional second entity (instantaneous power) for the peak-power markers
       temperatureEntity: newTemperatureEntity, // optional second entity (outdoor temp) for the temperature line
+      tempMode:   newTempMode, // 'daily' | 'minmax' | 'mean' — how the temperature line is aggregated
       title:      config.title      ?? info.title,
       color:      config.color      ?? preset.color,
       colorPrev:  config.color_prev ?? preset.colorPrev,
@@ -552,10 +575,10 @@ class LutarymEnergyCard extends HTMLElement {
     });
   }
 
-  // Monthly mean outdoor temperature — a genuine time series (unlike the
-  // energy entity's cumulative sum), so 'mean' is the meaningful monthly
-  // statistic here.
-  async _fetchTemperature(year) {
+  // Monthly outdoor temperature — mean, min and max together (used by both
+  // the 'mean' and 'minmax' display modes, so one query covers both; which
+  // fields actually get drawn is a rendering choice, not a fetch choice).
+  async _fetchTemperatureMonthly(year) {
     const entity = this._config.temperatureEntity;
     const wsRequest = {
       type:          'recorder/statistics_during_period',
@@ -563,14 +586,53 @@ class LutarymEnergyCard extends HTMLElement {
       end_time:      new Date(year + 1, 0, 1).toISOString(),
       statistic_ids: [entity],
       period:        'month',
-      types:         ['mean'],
+      types:         ['mean', 'min', 'max'],
       units:         { temperature: '°C' },
     };
     const result = await this._hass.callWS(wsRequest);
     const stats = result?.[entity] ?? [];
     return Array.from({ length: 12 }, (_, month) => {
       const entry = stats.find(s => new Date(s.start).getMonth() === month);
-      return entry?.mean ?? null;
+      if (!entry) return null;
+      return { mean: entry.mean ?? null, min: entry.min ?? null, max: entry.max ?? null };
+    });
+  }
+
+  // Daily outdoor temperature for 'daily' mode — current year only (see
+  // _buildChart for why). One mean value per calendar day, which is what
+  // "täglich" means here — not full raw sensor resolution, which would be
+  // hundreds of times more data for no real gain at this chart's size.
+  async _fetchTemperatureDaily(year) {
+    const entity = this._config.temperatureEntity;
+    const wsRequest = {
+      type:          'recorder/statistics_during_period',
+      start_time:    new Date(year, 0, 1).toISOString(),
+      end_time:      new Date(year + 1, 0, 1).toISOString(),
+      statistic_ids: [entity],
+      period:        'day',
+      types:         ['mean'],
+      units:         { temperature: '°C' },
+    };
+    const result = await this._hass.callWS(wsRequest);
+    const stats = result?.[entity] ?? [];
+    return stats
+      .map(s => {
+        const d = new Date(s.start);
+        return { month: d.getMonth(), day: d.getDate(), value: s.mean ?? null };
+      })
+      .filter(p => p.value != null);
+  }
+
+  // Derives monthly {mean, min, max} from the daily array — used when
+  // 'daily' mode has to fall back to a coarser view (narrow card), so no
+  // second network request is needed just because the card got resized.
+  static monthlyFromDaily(daily) {
+    const byMonth = Array.from({ length: 12 }, () => []);
+    (daily || []).forEach(p => { if (p.value != null) byMonth[p.month].push(p.value); });
+    return byMonth.map(vals => {
+      if (!vals.length) return null;
+      const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+      return { mean, min: Math.min(...vals), max: Math.max(...vals) };
     });
   }
 
@@ -597,10 +659,17 @@ class LutarymEnergyCard extends HTMLElement {
         this._peakPowerData = [];
       }
 
+      this._temperatureDaily   = [];
+      this._temperatureMonthly = [];
       if (this._preset.supportsTemperatureLine && this._config.temperatureEntity) {
-        this._temperatureData = await Promise.all(years.map(y => this._fetchTemperature(y)));
-      } else {
-        this._temperatureData = [];
+        if (this._config.tempMode === 'daily') {
+          // Current year only — fetching+rendering daily points for every
+          // comparison year as well would be a lot of visual noise on top
+          // of the bars, which already do the year-to-year comparison job.
+          this._temperatureDaily = await this._fetchTemperatureDaily(currentYear);
+        } else {
+          this._temperatureMonthly = await Promise.all(years.map(y => this._fetchTemperatureMonthly(y)));
+        }
       }
     } catch (err) {
       console.error('[lutarym-energy-card]', err);
@@ -778,6 +847,13 @@ class LutarymEnergyCard extends HTMLElement {
     const kwp = (this._preset.supportsCapacityLine && this._config.kwp) ? this._config.kwp : null;
     const hasPeakPower = !!(this._preset.supportsPeakPower && this._config.powerEntity);
     const hasTemperature = !!(this._preset.supportsTemperatureLine && this._config.temperatureEntity);
+    // Graceful degradation: daily resolution needs real width, or it turns
+    // into an illegible smear of ~365 points. Falls back to a monthly
+    // min/max band first, then — on very narrow cards, where even that gets
+    // cramped — down to a plain monthly average.
+    let tempMode = hasTemperature ? this._config.tempMode : null;
+    if (tempMode === 'daily' && px < 500) tempMode = 'minmax';
+    if (tempMode && tempMode !== 'mean' && px < 280) tempMode = 'mean';
     // The kWp line and the peak-power markers are in kW/kWp; the outdoor-
     // temperature line is in °C. Either way it's a genuinely different unit
     // than the left axis, so they share one right-hand scale — kW/kWp and
@@ -836,9 +912,25 @@ class LutarymEnergyCard extends HTMLElement {
     // kWp line and the measured monthly peaks, so a peak that slightly
     // exceeds the nameplate capacity still fits). For outdoor temperature it
     // needs a real min too, since winter months regularly go negative.
+    // Monthly {mean,min,max} regardless of how the data was fetched — if
+    // temp_mode is 'daily' but we're rendering a degraded monthly view,
+    // derive it from the daily array instead of a second network request.
+    const monthlyTempFor = yearIdx => {
+      if (this._config.tempMode === 'daily') {
+        return yearIdx === lastIndex ? LutarymEnergyCard.monthlyFromDaily(this._temperatureDaily) : [];
+      }
+      return this._temperatureMonthly[yearIdx] || [];
+    };
+
     let rightMin = 0, rightMax = null;
     if (hasTemperature) {
-      const tVals = (this._temperatureData || []).flat().filter(v => v != null);
+      let tVals;
+      if (tempMode === 'daily') {
+        tVals = (this._temperatureDaily || []).map(p => p.value).filter(v => v != null);
+      } else {
+        const monthly = monthlyTempFor(lastIndex);
+        tVals = monthly.flatMap(m => m ? [m.mean, m.min, m.max] : []).filter(v => v != null);
+      }
       [rightMin, rightMax] = tVals.length ? this._niceRange(Math.min(...tVals), Math.max(...tVals)) : [-10, 20];
     } else if (showRightAxis) {
       const peakVals = hasPeakPower
@@ -998,21 +1090,54 @@ class LutarymEnergyCard extends HTMLElement {
     // temperature lines against several years' bars gets visually busy fast;
     // the summary line already exists for cross-year comparison elsewhere).
     let tempLine = '';
-    if (hasTemperature) {
-      const tSeries = this._temperatureData[lastIndex] || [];
+    if (tempMode === 'daily') {
+      const points = (this._temperatureDaily || [])
+        .filter(p => p.month <= currentMonth)
+        .map(p => {
+          const daysInMonth = new Date(years[lastIndex], p.month + 1, 0).getDate();
+          const cx = pad.left + p.month * slotW + ((p.day - 0.5) / daysInMonth) * slotW;
+          return { x: cx, y: yForRight(p.value), v: p.value, month: p.month, day: p.day };
+        })
+        .sort((a, b) => a.x - b.x);
+      if (points.length) {
+        const pathD = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+        tempLine += `<path d="${pathD}" fill="none" stroke="${this._config.colorTemp}" stroke-width="1.5"/>`;
+        // Hover target: one invisible strip per day is too many DOM nodes for
+        // a year of data, so a single tooltip source covering the whole path
+        // isn't practical either — instead, sample every ~3rd point for a
+        // hoverable dot; the line itself already conveys the daily detail.
+        points.filter((_, i) => i % 3 === 0 || i === points.length - 1).forEach(p => {
+          const monthLabel = monthStyle === 'initial' ? MONTHS_INITIAL_L[p.month] : MONTHS_ABBR_L[p.month];
+          const tip = LutarymEnergyCard.escAttr(`${p.day}. ${monthLabel} ${years[lastIndex]}: ${p.v.toFixed(1)}°C`);
+          tempLine += `<circle class="lut-tt" data-tooltip="${tip}" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="6" fill="transparent"/>`;
+        });
+      }
+    } else if (tempMode === 'minmax' || tempMode === 'mean') {
+      const monthly = monthlyTempFor(lastIndex);
       const points = [];
       for (let m = 0; m <= currentMonth; m++) {
-        const v = tSeries[m];
-        if (v == null) continue;
+        const entry = monthly[m];
+        if (!entry || entry.mean == null) continue;
         const cx = pad.left + m * slotW + slotW / 2;
-        points.push({ x: cx, y: yForRight(v), v, m });
+        points.push({ x: cx, y: yForRight(entry.mean), entry, m });
+      }
+      if (tempMode === 'minmax') {
+        points.forEach(p => {
+          if (p.entry.min == null || p.entry.max == null) return;
+          const yMin = yForRight(p.entry.min);
+          const yMax = yForRight(p.entry.max);
+          tempLine += `<line x1="${p.x.toFixed(1)}" y1="${yMin.toFixed(1)}" x2="${p.x.toFixed(1)}" y2="${yMax.toFixed(1)}" stroke="${this._config.colorTemp}" stroke-width="4" stroke-linecap="round" opacity="0.35"/>`;
+        });
       }
       if (points.length) {
         const pathD = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
         tempLine += `<path d="${pathD}" fill="none" stroke="${this._config.colorTemp}" stroke-width="2"/>`;
         points.forEach(p => {
           const monthLabel = monthStyle === 'initial' ? MONTHS_INITIAL_L[p.m] : MONTHS_ABBR_L[p.m];
-          const tip = LutarymEnergyCard.escAttr(`${monthLabel} ${years[lastIndex]}: ${p.v.toFixed(1)}°C`);
+          const tipText = tempMode === 'minmax' && p.entry.min != null && p.entry.max != null
+            ? `${monthLabel} ${years[lastIndex]}: Ø ${p.entry.mean.toFixed(1)}°C (${p.entry.min.toFixed(1)}–${p.entry.max.toFixed(1)}°C)`
+            : `${monthLabel} ${years[lastIndex]}: ${p.entry.mean.toFixed(1)}°C`;
+          const tip = LutarymEnergyCard.escAttr(tipText);
           // Invisible larger hit circle + small visible dot, same pattern as elsewhere.
           tempLine += `<circle class="lut-tt" data-tooltip="${tip}" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="8" fill="transparent"/>`;
           tempLine += `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="2.5" fill="${this._config.colorTemp}"/>`;
@@ -1360,6 +1485,7 @@ class LutarymEnergyCardEditor extends HTMLElement {
     delete preserved.kwp;
     delete preserved.power_entity;
     delete preserved.temperature_entity;
+    delete preserved.temp_mode;
     delete preserved.color_temp;
     preserved.card_type = value;
 
@@ -1765,6 +1891,17 @@ class LutarymEnergyCardEditor extends HTMLElement {
         { entity: {} },
         'temperature_entity',
         this._config.temperature_entity,
+      ));
+      form.appendChild(this._row(
+        t(hass, 'editorTempMode'),
+        t(hass, 'editorTempModeHint'),
+        { select: { mode: 'dropdown', options: [
+          { value: 'daily',  label: t(hass, 'tempModeDaily') },
+          { value: 'minmax', label: t(hass, 'tempModeMinMax') },
+          { value: 'mean',   label: t(hass, 'tempModeMean') },
+        ] } },
+        'temp_mode',
+        this._config.temp_mode || 'daily',
       ));
     }
 

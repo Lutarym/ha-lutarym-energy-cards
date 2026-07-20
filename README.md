@@ -8,9 +8,17 @@ The editor and the card itself are fully bilingual (German/English),
 following `hass.language` automatically.
 
 For heat pump energy, an optional outdoor-temperature entity can be set to
-draw a connected line (current year only) for the monthly mean outdoor
-temperature, on its own right-hand °C scale — unlike kW, this axis has a
-real min *and* max, since winter months regularly go negative.
+draw a temperature line on its own right-hand °C scale (unlike kW, this
+axis has a real min *and* max, since winter months regularly go
+negative). The display resolution is chosen via `temp_mode`:
+
+- `daily` (default) — one point per calendar day, matching what you'd see
+  in Home Assistant's own history graph. Automatically simplifies to a
+  monthly min/max band below ~500px card width, then to a plain monthly
+  average line below ~280px — computed from the same daily data, no
+  extra network request.
+- `minmax` — a monthly min/max band plus a mean line, always.
+- `mean` — a plain monthly average line, always.
 
 For PV yield, an optional installed capacity (kWp) can be set — this
 draws a dashed reference line across the chart, read against its own
@@ -68,7 +76,8 @@ show_values: true         # optional — the number above each bar (not the axis
 stat_mode: mean           # optional, only for "akku": mean | minmax (bar stays at 0, min/max as a whisker, no separate axis)
 kwp: 14.4                 # optional, only for "pv": installed capacity — draws a dashed reference line vs. a second right-hand kW scale
 power_entity: sensor.xyz  # optional, only for "pv": instantaneous power sensor — shows the monthly peak as a tick per bar
-temperature_entity: sensor.aussentemperatur # optional, only for "wp": outdoor temp — draws a mean-temperature line
+temperature_entity: sensor.aussentemperatur # optional, only for "wp": outdoor temp — draws a temperature line
+temp_mode: daily          # optional, only for "wp" with temperature_entity: daily | minmax | mean (default: daily)
 color_temp: "#0ea5e9"     # optional, temperature line color (default: sky blue)
 color: "#f59e0b"         # optional, main color for the current year
 color_prev: "#888888"    # optional, color for the immediate previous year
