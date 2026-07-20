@@ -17,6 +17,7 @@
  *   title_font_size: 14    # optional, title font size in px (default: 14)
  *   label_font_size: 10    # optional, chart label font size in px (default: automatic)
  *   years_back: 1           # optional: 0 | 1 | 2 | 3 — additional previous years, 0 = current year only (default: 1)
+ *   show_values: true       # optional — the number above each bar (not the axis scale), default: true, applies to all card types
  *   stat_mode: mean         # optional, only for presets with a range option (currently "akku"): mean | minmax
  *                            # "minmax" keeps the bar itself anchored at 0 (height = monthly mean, same as
  *                            # every other card type) and overlays the monthly min/max as a whisker (a
@@ -52,6 +53,8 @@ const I18N = {
     yearsBack1: '1 year back (2 years total)',
     yearsBack2: '2 years back (3 years total)',
     yearsBack3: '3 years back (4 years total)',
+    editorShowValues: 'Show values in chart',
+    editorShowValuesHint: 'The number above each bar — not the axis scale',
     editorStatMode: 'Display',
     editorStatModeHint: 'How each month is summarized',
     statModeMean: 'Average',
@@ -98,6 +101,8 @@ const I18N = {
     yearsBack1: '1 Jahr zurück (2 Jahre gesamt)',
     yearsBack2: '2 Jahre zurück (3 Jahre gesamt)',
     yearsBack3: '3 Jahre zurück (4 Jahre gesamt)',
+    editorShowValues: 'Zahlenwerte im Diagramm anzeigen',
+    editorShowValuesHint: 'Die Zahl über jedem Balken — nicht die Achsen-Skala',
     editorStatMode: 'Darstellung',
     editorStatModeHint: 'Wie jeder Monat zusammengefasst wird',
     statModeMean: 'Durchschnitt',
@@ -350,6 +355,10 @@ class LutarymEnergyCard extends HTMLElement {
       // No default: never assume a value for a card shared publicly. Purely a display constant,
       // doesn't affect data fetching.
       kwp: (preset.supportsCapacityLine && config.kwp != null && config.kwp !== '') ? Number(config.kwp) : null,
+      // Whether to show the number above each bar — applies to every card
+      // type, purely a rendering choice, default on. Doesn't affect the
+      // axis scale or the summary line above the chart.
+      showValues: config.show_values !== false,
     };
     this._preset = preset;
 
@@ -428,6 +437,7 @@ class LutarymEnergyCard extends HTMLElement {
             },
           },
         },
+        { name: 'show_values', selector: { boolean: {} } },
         { name: 'color', selector: { text: { type: 'color' } } },
         { name: 'color_prev', selector: { text: { type: 'color' } } },
         { name: 'color_text', selector: { text: { type: 'color' } } },
@@ -454,6 +464,7 @@ class LutarymEnergyCard extends HTMLElement {
         title: t(fallbackHass, 'editorTitle'),
         stat_mode: t(fallbackHass, 'editorStatMode'),
         years_back: t(fallbackHass, 'editorYearsBack'),
+        show_values: t(fallbackHass, 'editorShowValues'),
         color: t(fallbackHass, 'colorCurrentYear'),
         color_prev: t(fallbackHass, 'colorPreviousYears'),
         color_text: t(fallbackHass, 'colorTextValues'),
@@ -797,7 +808,7 @@ class LutarymEnergyCard extends HTMLElement {
           // No number label here — it read as belonging to the (black) whisker
           // rather than the (colored) bar. The summary line above the chart
           // already gives the exact Ø/min/max figures.
-        } else if (isCurrentSeries && fVal > 0 && primaryVal > 0) {
+        } else if (this._config.showValues && isCurrentSeries && fVal > 0 && primaryVal > 0) {
           // Value label only for the current year (otherwise too cluttered with multiple years)
           valLabels += `<text x="${(xBar + barW / 2).toFixed(1)}" y="${(bY - 3).toFixed(1)}" text-anchor="middle" font-size="${fVal}" fill="${colorText}">${primaryVal.toFixed(0)}${this._preset.valueSuffix}</text>`;
         }
@@ -1303,6 +1314,39 @@ class LutarymEnergyCardEditor extends HTMLElement {
     return wrap;
   }
 
+  // Simple boolean toggle (native checkbox — same reasoning as the native
+  // <select> for dropdowns: no dependency on ha-selector loading timing).
+  _toggleRow(labelText, hintText, field, checked) {
+    const wrap = document.createElement('div');
+    wrap.className = 'editor-row';
+
+    const line = document.createElement('div');
+    line.className = 'toggle-line';
+
+    const label = document.createElement('label');
+    label.textContent = labelText;
+    line.appendChild(label);
+
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.className = 'toggle-input';
+    input.checked = checked;
+    input.addEventListener('change', ev => {
+      this._onFieldChange(field, ev.target.checked);
+    });
+    line.appendChild(input);
+
+    wrap.appendChild(line);
+
+    if (hintText) {
+      const hint = document.createElement('div');
+      hint.className = 'hint';
+      hint.textContent = hintText;
+      wrap.appendChild(hint);
+    }
+    return wrap;
+  }
+
   // Arrange two form rows side by side instead of stacked
   _sideBySide(...rows) {
     const wrap = document.createElement('div');
@@ -1376,6 +1420,19 @@ class LutarymEnergyCardEditor extends HTMLElement {
         .row-pair > .editor-row {
           flex: 1;
           min-width: 0;
+        }
+        .toggle-line {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+        }
+        .toggle-input {
+          width: 18px;
+          height: 18px;
+          flex-shrink: 0;
+          cursor: pointer;
+          accent-color: var(--primary-color, #03a9f4);
         }
         .section-label {
           font-size: 12px;
@@ -1480,6 +1537,13 @@ class LutarymEnergyCardEditor extends HTMLElement {
       ] } },
       'years_back',
       String(this._config.years_back ?? 1),
+    ));
+
+    form.appendChild(this._toggleRow(
+      t(hass, 'editorShowValues'),
+      t(hass, 'editorShowValuesHint'),
+      'show_values',
+      this._config.show_values !== false,
     ));
 
     const sectionLabel = document.createElement('div');

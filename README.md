@@ -55,6 +55,7 @@ the visual configuration form directly.
 type: custom:lutarym-energy-card
 card_type: pv            # autarkie | energy | pv | wallbox | wp | klima | akku | einspeisung
 years_back: 2             # optional: 0 | 1 | 2 | 3 — additional previous years (default: 1)
+show_values: true         # optional — the number above each bar (not the axis scale), default: true, all card types
 stat_mode: mean           # optional, only for "akku": mean | minmax (bar stays at 0, min/max as a whisker, no separate axis)
 kwp: 14.4                 # optional, only for "pv": installed capacity — draws a dashed reference line vs. a second right-hand kW scale
 power_entity: sensor.xyz  # optional, only for "pv": instantaneous power sensor — shows the monthly peak as a tick per bar
