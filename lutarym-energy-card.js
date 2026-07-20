@@ -682,8 +682,8 @@ class LutarymEnergyCard extends HTMLElement {
     // room, or "14.4 kWp" clips and its trailing "p" silently disappears).
     let pad = lp.pad;
     if (showRightAxis) {
-      const kwpLabelChars = kwp != null ? `${kwp} kWp`.length : 0;
-      const rightChars = Math.max(kwpLabelChars, 4); // at least room for e.g. "100"
+      const kwpLabelChars = kwp != null ? String(kwp).length : 0;
+      const rightChars = Math.max(kwpLabelChars, 5); // room for tick labels like "17.5" too
       const rightExtra = Math.ceil(rightChars * fAxis * 0.62) + 10;
       pad = { ...lp.pad, right: lp.pad.right + rightExtra };
     }
@@ -733,12 +733,19 @@ class LutarymEnergyCard extends HTMLElement {
     }
 
     const TICKS = px < 280 ? 4 : 5;
-    let grid = '', yLabels = '';
+    let grid = '', yLabels = '', yLabelsRight = '';
     for (let i = 0; i <= TICKS; i++) {
       const v = (maxVal / TICKS) * i;
       const y = pad.top + plotH - (v / maxVal) * plotH;
       grid    += `<line x1="${pad.left}" y1="${y.toFixed(1)}" x2="${pad.left + plotW}" y2="${y.toFixed(1)}" stroke="var(--divider-color)" stroke-width="0.5" stroke-dasharray="4 3"/>`;
       yLabels += `<text x="${pad.left - 4}" y="${(y + 4).toFixed(1)}" text-anchor="end" font-size="${fAxis}" fill="var(--secondary-text-color)">${Number.isInteger(v) ? v : v.toFixed(1)}</text>`;
+    }
+    if (showRightAxis) {
+      for (let i = 0; i <= TICKS; i++) {
+        const v = (rightMax / TICKS) * i;
+        const y = pad.top + plotH - (v / rightMax) * plotH;
+        yLabelsRight += `<text x="${(pad.left + plotW + 6).toFixed(1)}" y="${(y + 4).toFixed(1)}" text-anchor="start" font-size="${fAxis}" fill="var(--secondary-text-color)">${Number.isInteger(v) ? v : v.toFixed(1)}</text>`;
+      }
     }
 
     let bars = '', xLabels = '', valLabels = '';
@@ -835,23 +842,25 @@ class LutarymEnergyCard extends HTMLElement {
 
     const unitLabel = `<text x="${(pad.left - 4).toFixed(1)}" y="${(pad.top - 10).toFixed(1)}" text-anchor="middle" font-size="${fAxis}" fill="var(--secondary-text-color)">${this._preset.unit}</text>`;
 
-    // Right axis (kW) — shared by the installed-capacity line and the
-    // peak-power ticks, since both are in the same unit.
+    // Right axis — shared by the installed-capacity line and the peak-power
+    // ticks. Unit label follows kWp when a capacity is configured (that's
+    // the more specific/meaningful label for this preset); falls back to kW
+    // when only peak-power markers are shown without a capacity line.
     let kwpLine = '';
+    const rightUnit = kwp != null ? 'kWp' : 'kW';
     const unitLabelRight = showRightAxis
-      ? `<text x="${(pad.left + plotW + 4).toFixed(1)}" y="${(pad.top - 10).toFixed(1)}" text-anchor="start" font-size="${fAxis}" fill="var(--secondary-text-color)">kW</text>`
+      ? `<text x="${(pad.left + plotW + 4).toFixed(1)}" y="${(pad.top - 10).toFixed(1)}" text-anchor="start" font-size="${fAxis}" fill="var(--secondary-text-color)">${rightUnit}</text>`
       : '';
     const axesRight = showRightAxis
       ? `<line x1="${(pad.left + plotW).toFixed(1)}" y1="${pad.top}" x2="${(pad.left + plotW).toFixed(1)}" y2="${(pad.top + plotH).toFixed(1)}" stroke="var(--secondary-text-color)" stroke-width="1"/>`
       : '';
-    const zeroLabelRight = showRightAxis
-      ? `<text x="${(pad.left + plotW + 6).toFixed(1)}" y="${(pad.top + plotH + 4).toFixed(1)}" text-anchor="start" font-size="${fAxis}" fill="var(--secondary-text-color)">0</text>`
-      : '';
     if (kwp != null) {
       const yKwp = pad.top + plotH - (Math.min(kwp, rightMax) / rightMax) * plotH;
+      // No unit suffix here — the axis unit label above already says "kWp",
+      // repeating it on every line/value would just be noise.
       kwpLine = `
         <line x1="${pad.left}" y1="${yKwp.toFixed(1)}" x2="${(pad.left + plotW).toFixed(1)}" y2="${yKwp.toFixed(1)}" stroke="${colorText}" stroke-width="1" stroke-dasharray="5 3" opacity="0.85"/>
-        <text x="${(pad.left + plotW + 6).toFixed(1)}" y="${(yKwp - 4).toFixed(1)}" text-anchor="start" font-size="${fAxis}" fill="${colorText}">${kwp} kWp</text>
+        <text x="${(pad.left + plotW + 6).toFixed(1)}" y="${(yKwp - 4).toFixed(1)}" text-anchor="start" font-size="${fAxis}" fill="${colorText}">${kwp}</text>
       `;
     }
 
@@ -862,7 +871,7 @@ class LutarymEnergyCard extends HTMLElement {
     `;
 
     return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:${H}px;display:block;">
-      ${grid}${bars}${kwpLine}${valLabels}${xLabels}${yLabels}${unitLabel}${unitLabelRight}${zeroLabelRight}${axes}${legend}
+      ${grid}${bars}${kwpLine}${valLabels}${xLabels}${yLabels}${yLabelsRight}${unitLabel}${unitLabelRight}${axes}${legend}
     </svg>`;
   }
 
