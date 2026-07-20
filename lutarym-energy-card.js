@@ -617,14 +617,56 @@ class LutarymEnergyCard extends HTMLElement {
     return { fMonth, fAxis, fVal };
   }
 
+  // Estimates how many lines the ".totals" summary row will wrap onto, so
+  // the reserved overhead height stays accurate however many years (and
+  // however long their Ø/min–max text) are shown. Without this, a card
+  // configured with e.g. all 4 years wraps onto 2 lines but the layout still
+  // only reserves room for 1 — pushing the chart (and its month labels)
+  // outside the card.
+  _totalsRowCount(px) {
+    const showTotal = px === 0 || px >= 280;
+    if (!showTotal) return 0;
+
+    const years = this._seriesYears;
+    const N = years.length || Math.max(1, (this._config.yearsBack ?? 1) + 1);
+    const availW = Math.max((px || 400) - 28, 80); // minus the card's left/right padding
+
+    let itemTexts;
+    if (this._seriesData && this._seriesData.length === N) {
+      itemTexts = years.map((yr, idx) => `${yr}: ${this._formatSummary(this._summary(this._seriesData[idx] || []))}`);
+    } else {
+      // Data not loaded yet — assume the longest format this card ever
+      // emits (range-mode Ø/min/max) so reserved space is never too small.
+      itemTexts = Array.from({ length: N }, () => '0000: Ø 100% (100–100%)');
+    }
+
+    const charW   = 12 * 0.56; // ~px per character at the totals row's 12px font
+    const dotGap  = 14;        // color dot + its gap to the text
+    const itemGap = 16;        // gap between items (matches the CSS gap)
+
+    let rowW = 0, rows = 1;
+    itemTexts.forEach(text => {
+      const itemW = dotGap + text.length * charW;
+      const advance = itemW + (rowW > 0 ? itemGap : 0);
+      if (rowW > 0 && rowW + advance > availW) {
+        rows++;
+        rowW = itemW;
+      } else {
+        rowW += advance;
+      }
+    });
+    return rows;
+  }
+
   // Height of title + summary row + chart padding — everything except the
   // actual chart. Needed to know how much of the total available card
   // height remains for the chart itself.
   _nonChartOverhead(px) {
     const titleFontSize = this._config.titleFontSize || 14;
     const headerH = 14 + titleFontSize * 1.3 + 2; // padding-top + line height + padding-bottom
-    const showTotal = px === 0 || px >= 280;
-    const totalsH = showTotal ? 32 : 0;
+    const rows = this._totalsRowCount(px);
+    // row height + row-gap between wrapped rows + top/bottom padding
+    const totalsH = rows > 0 ? (rows * 18 + (rows - 1) * 4 + 14) : 0;
     const chartPaddingBottom = 10;
     return headerH + totalsH + chartPaddingBottom;
   }
