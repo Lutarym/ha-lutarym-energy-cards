@@ -7,6 +7,12 @@ A single card; the card type is chosen via a visual configuration form.
 The editor and the card itself are fully bilingual (German/English),
 following `hass.language` automatically.
 
+For PV yield, an optional installed capacity (kWp) can be set — this
+draws a dashed reference line across the chart, read against its own
+scale on the right (kW isn't the same unit as the kWh bars, so a
+second axis genuinely earns its place here, unlike the min/max case
+above).
+
 For the battery state of charge, the monthly display can be switched
 between a plain average and a min/max range: the bar itself always stays
 anchored at 0 (height = monthly mean, exactly like every other card
@@ -42,6 +48,7 @@ type: custom:lutarym-energy-card
 card_type: pv            # autarkie | energy | pv | wallbox | wp | klima | akku | einspeisung
 years_back: 2             # optional: 0 | 1 | 2 | 3 — additional previous years (default: 1)
 stat_mode: mean           # optional, only for "akku": mean | minmax (bar stays at 0, min/max as a whisker, no separate axis)
+kwp: 14.4                 # optional, only for "pv": installed capacity — draws a dashed reference line vs. a second right-hand kW scale
 color: "#f59e0b"         # optional, main color for the current year
 color_prev: "#888888"    # optional, color for the immediate previous year
 color_text: "#1c1c1c"    # optional, text/value color (default: follows theme)

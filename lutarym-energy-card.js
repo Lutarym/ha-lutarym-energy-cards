@@ -50,6 +50,8 @@ const I18N = {
     editorStatModeHint: 'How each month is summarized',
     statModeMean: 'Average',
     statModeMinMax: 'Min/max range',
+    editorKwp: 'Installed capacity (kWp)',
+    editorKwpHint: 'Optional — draws a reference line with its own scale on the right',
     sectionColors: 'Colors',
     colorCurrentYear: 'Current year',
     colorCurrentYearHint: 'Default for "{preset}": {color}',
@@ -92,6 +94,8 @@ const I18N = {
     editorStatModeHint: 'Wie jeder Monat zusammengefasst wird',
     statModeMean: 'Durchschnitt',
     statModeMinMax: 'Min/Max-Bereich',
+    editorKwp: 'Installierte Leistung (kWp)',
+    editorKwpHint: 'Optional — zeichnet eine Referenzlinie mit eigener Skala rechts',
     sectionColors: 'Farben',
     colorCurrentYear: 'Aktuelles Jahr',
     colorCurrentYearHint: 'Standard für "{preset}": {color}',
@@ -198,6 +202,7 @@ const PRESETS = {
     fixedMax:   null,
     aggregate:  'sum',
     valueSuffix: '',
+    supportsCapacityLine: true, // this preset offers the optional "installed capacity (kWp)" reference line
   },
   wallbox: {
     entity:     'sensor.wallbox',
@@ -324,6 +329,10 @@ class LutarymEnergyCard extends HTMLElement {
       labelFontSize: config.label_font_size ? Number(config.label_font_size) : null, // null = automatic (responsive)
       yearsBack:  newYearsBack, // 0-3, how many years in addition to the current year are shown
       statMode:   newStatMode,  // 'mean' | 'minmax' — only meaningful for presets with supportsRange
+      // Installed capacity reference line — only meaningful for presets with supportsCapacityLine.
+      // No default: never assume a value for a card shared publicly. Purely a display constant,
+      // doesn't affect data fetching.
+      kwp: (preset.supportsCapacityLine && config.kwp != null && config.kwp !== '') ? Number(config.kwp) : null,
     };
     this._preset = preset;
 
@@ -610,7 +619,11 @@ class LutarymEnergyCard extends HTMLElement {
     const px = this._width || 400;
     const lp = this._layoutParams(px);
     const rangeMode = this._isRangeMode();
-    const pad = lp.pad;
+    const kwp = (this._preset.supportsCapacityLine && this._config.kwp) ? this._config.kwp : null;
+    // The kWp line uses its own (differently-unitted) scale on the right —
+    // unlike the earlier min/max case, this one genuinely isn't the same
+    // scale as the left axis, so a second axis earns its keep here.
+    const pad = kwp ? { ...lp.pad, right: lp.pad.right + 34 } : lp.pad;
     const { monthStyle, barRatio } = lp;
     const H = this._effectiveChartHeight(lp.H, px);
     const { fMonth, fAxis, fVal } = this._labelFontSizes(px, H, lp.H);
@@ -737,13 +750,30 @@ class LutarymEnergyCard extends HTMLElement {
     }
 
     const unitLabel = `<text x="${(pad.left - 4).toFixed(1)}" y="${(pad.top - 10).toFixed(1)}" text-anchor="middle" font-size="${fAxis}" fill="var(--secondary-text-color)">${this._preset.unit}</text>`;
+
+    // Installed capacity (kWp) reference line — own scale on the right,
+    // since kW and the left axis's kWh are not the same unit.
+    let kwpLine = '', unitLabelRight = '';
+    const axesRight = kwp ? `<line x1="${(pad.left + plotW).toFixed(1)}" y1="${pad.top}" x2="${(pad.left + plotW).toFixed(1)}" y2="${(pad.top + plotH).toFixed(1)}" stroke="var(--secondary-text-color)" stroke-width="1"/>` : '';
+    if (kwp) {
+      const rightMax = this._niceMax(kwp);
+      const yKwp = pad.top + plotH - (Math.min(kwp, rightMax) / rightMax) * plotH;
+      unitLabelRight = `<text x="${(pad.left + plotW + 4).toFixed(1)}" y="${(pad.top - 10).toFixed(1)}" text-anchor="start" font-size="${fAxis}" fill="var(--secondary-text-color)">kWp</text>`;
+      kwpLine = `
+        <line x1="${pad.left}" y1="${yKwp.toFixed(1)}" x2="${(pad.left + plotW).toFixed(1)}" y2="${yKwp.toFixed(1)}" stroke="${colorText}" stroke-width="1" stroke-dasharray="5 3" opacity="0.85"/>
+        <text x="${(pad.left + plotW + 6).toFixed(1)}" y="${(yKwp - 4).toFixed(1)}" text-anchor="start" font-size="${fAxis}" fill="${colorText}">${kwp} kWp</text>
+        <text x="${(pad.left + plotW + 6).toFixed(1)}" y="${(pad.top + plotH + 4).toFixed(1)}" text-anchor="start" font-size="${fAxis}" fill="var(--secondary-text-color)">0</text>
+      `;
+    }
+
     const axes = `
       <line x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top + plotH}" stroke="var(--secondary-text-color)" stroke-width="1"/>
       <line x1="${pad.left}" y1="${pad.top + plotH}" x2="${pad.left + plotW}" y2="${pad.top + plotH}" stroke="var(--secondary-text-color)" stroke-width="1"/>
+      ${axesRight}
     `;
 
     return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:${H}px;display:block;">
-      ${grid}${bars}${valLabels}${xLabels}${yLabels}${unitLabel}${axes}${legend}
+      ${grid}${bars}${kwpLine}${valLabels}${xLabels}${yLabels}${unitLabel}${unitLabelRight}${axes}${legend}
     </svg>`;
   }
 
@@ -988,6 +1018,7 @@ class LutarymEnergyCardEditor extends HTMLElement {
     delete preserved.color;
     delete preserved.color_prev;
     delete preserved.stat_mode;
+    delete preserved.kwp;
     preserved.card_type = value;
 
     this._config = preserved;
@@ -1117,7 +1148,7 @@ class LutarymEnergyCardEditor extends HTMLElement {
   // "Automatic" button that clears the field. placeholderText is shown
   // when the field is empty — makes it visible which default font size
   // applies, instead of the field just looking empty.
-  _numberRow(labelText, hintText, field, value, min, max, isAutoAllowed, placeholderText) {
+  _numberRow(labelText, hintText, field, value, min, max, isAutoAllowed, placeholderText, step = 1, unitText = 'px') {
     const wrap = document.createElement('div');
     wrap.className = 'editor-row';
 
@@ -1133,6 +1164,7 @@ class LutarymEnergyCardEditor extends HTMLElement {
     input.className = 'number-input';
     input.min = min;
     input.max = max;
+    input.step = step;
     if (placeholderText != null) input.placeholder = placeholderText;
     if (value != null) input.value = value;
     input.addEventListener('input', ev => {
@@ -1144,7 +1176,7 @@ class LutarymEnergyCardEditor extends HTMLElement {
 
     const unit = document.createElement('span');
     unit.className = 'color-hex';
-    unit.textContent = 'px';
+    unit.textContent = unitText;
     controls.appendChild(unit);
 
     let autoBtn;
@@ -1315,6 +1347,16 @@ class LutarymEnergyCardEditor extends HTMLElement {
         ] } },
         'stat_mode',
         this._config.stat_mode === 'minmax' ? 'minmax' : 'mean',
+      ));
+    }
+
+    if (preset.supportsCapacityLine) {
+      form.appendChild(this._numberRow(
+        t(hass, 'editorKwp'),
+        t(hass, 'editorKwpHint'),
+        'kwp',
+        this._config.kwp,
+        0, 100, false, null, 0.1, 'kWp',
       ));
     }
 
