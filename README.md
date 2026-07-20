@@ -13,6 +13,14 @@ scale on the right (kW isn't the same unit as the kWh bars, so a
 second axis genuinely earns its place here, unlike the min/max case
 above).
 
+Additionally, an optional *power* entity (kW/W, `state_class:
+measurement` — e.g. the inverter's current AC power) can be set to show
+the actual monthly peak: a short tick on top of each bar, on the same
+right-hand kW axis as the kWp line. This needs a **separate** entity
+from the yield sensor above — the yield sensor is a cumulative energy
+counter (kWh), which only has a meaningful `sum` per month; only an
+instantaneous power sensor has a meaningful monthly `max`.
+
 For the battery state of charge, the monthly display can be switched
 between a plain average and a min/max range: the bar itself always stays
 anchored at 0 (height = monthly mean, exactly like every other card
@@ -49,6 +57,7 @@ card_type: pv            # autarkie | energy | pv | wallbox | wp | klima | akku 
 years_back: 2             # optional: 0 | 1 | 2 | 3 — additional previous years (default: 1)
 stat_mode: mean           # optional, only for "akku": mean | minmax (bar stays at 0, min/max as a whisker, no separate axis)
 kwp: 14.4                 # optional, only for "pv": installed capacity — draws a dashed reference line vs. a second right-hand kW scale
+power_entity: sensor.xyz  # optional, only for "pv": instantaneous power sensor — shows the monthly peak as a tick per bar
 color: "#f59e0b"         # optional, main color for the current year
 color_prev: "#888888"    # optional, color for the immediate previous year
 color_text: "#1c1c1c"    # optional, text/value color (default: follows theme)

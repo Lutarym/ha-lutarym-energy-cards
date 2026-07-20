@@ -21,6 +21,12 @@
  *                            # "minmax" keeps the bar itself anchored at 0 (height = monthly mean, same as
  *                            # every other card type) and overlays the monthly min/max as a whisker (a
  *                            # vertical line with caps) on the same scale — same axis, no number label.
+ *   kwp: 14.4               # optional, only for "pv": installed capacity — dashed reference line on a right-hand kW axis
+ *   power_entity: sensor.xyz # optional, only for "pv": instantaneous power sensor (kW/W) — shows the monthly
+ *                             # peak (max) as a short tick on top of each bar, on the same right-hand kW axis
+ *                             # as kwp. Needs a *separate* entity from the energy sensor above, since power
+ *                             # (instantaneous) and energy (cumulative) are different measurements — HA only
+ *                             # computes meaningful min/mean/max statistics for the former.
  *
  * Added via the UI ("Add Card" → "Energy Card by Lutarym"); the card type
  * plus optional overrides can be chosen conveniently in the visual editor.
@@ -52,6 +58,8 @@ const I18N = {
     statModeMinMax: 'Min/max range',
     editorKwp: 'Installed capacity (kWp)',
     editorKwpHint: 'Optional — draws a reference line with its own scale on the right',
+    editorPowerEntity: 'Power entity (kW)',
+    editorPowerEntityHint: 'Optional — instantaneous power sensor, shows the monthly peak as a marker on each bar',
     sectionColors: 'Colors',
     colorCurrentYear: 'Current year',
     colorCurrentYearHint: 'Default for "{preset}": {color}',
@@ -96,6 +104,8 @@ const I18N = {
     statModeMinMax: 'Min/Max-Bereich',
     editorKwp: 'Installierte Leistung (kWp)',
     editorKwpHint: 'Optional — zeichnet eine Referenzlinie mit eigener Skala rechts',
+    editorPowerEntity: 'Leistungs-Entity (kW)',
+    editorPowerEntityHint: 'Optional — Momentanleistungs-Sensor, zeigt die monatliche Spitze als Markierung auf jedem Balken',
     sectionColors: 'Farben',
     colorCurrentYear: 'Aktuelles Jahr',
     colorCurrentYearHint: 'Standard für "{preset}": {color}',
@@ -203,6 +213,7 @@ const PRESETS = {
     aggregate:  'sum',
     valueSuffix: '',
     supportsCapacityLine: true, // this preset offers the optional "installed capacity (kWp)" reference line
+    supportsPeakPower: true,    // this preset offers the optional monthly peak-power marker (needs a power entity)
   },
   wallbox: {
     entity:     'sensor.wallbox',
@@ -267,6 +278,7 @@ class LutarymEnergyCard extends HTMLElement {
     this.attachShadow({ mode: 'open' });
     this._seriesYears = [];   // years, oldest first, last = current year
     this._seriesData  = [];   // per year: Array[12] of monthly values
+    this._peakPowerData = []; // per year: Array[12] of monthly max power (kW), only when a power entity is configured
     this._loading   = true;
     this._error     = null;
     this._lastFetch = 0;
@@ -309,16 +321,21 @@ class LutarymEnergyCard extends HTMLElement {
     const newYearsBack = Math.min(3, Math.max(0, rawYearsBack));
     // 'minmax' only applies for presets that opt in (supportsRange); otherwise always 'mean'.
     const newStatMode = (preset.supportsRange && config.stat_mode === 'minmax') ? 'minmax' : 'mean';
+    // No default here either — this is a second, distinct entity (instantaneous power,
+    // not the cumulative energy entity above), only meaningful for supportsPeakPower presets.
+    const newPowerEntity = (preset.supportsPeakPower && config.power_entity) ? config.power_entity : '';
     const entityOrTypeChanged =
       !this._config ||
       this._config.card_type !== cardType ||
       this._config.entity !== newEntity ||
+      this._config.powerEntity !== newPowerEntity ||
       this._config.yearsBack !== newYearsBack ||
       this._config.statMode !== newStatMode;
 
     this._config = {
       card_type:  cardType,
       entity:     newEntity,
+      powerEntity: newPowerEntity, // optional second entity (instantaneous power) for the peak-power markers
       title:      config.title      ?? info.title,
       color:      config.color      ?? preset.color,
       colorPrev:  config.color_prev ?? preset.colorPrev,
@@ -485,6 +502,29 @@ class LutarymEnergyCard extends HTMLElement {
     });
   }
 
+  // Monthly peak (max) instantaneous power from the separate power entity —
+  // this is a different measurement than the energy entity above (power vs.
+  // cumulative energy), so it needs its own recorder query. Only called when
+  // a power entity is actually configured.
+  async _fetchPeakPower(year) {
+    const entity = this._config.powerEntity;
+    const wsRequest = {
+      type:          'recorder/statistics_during_period',
+      start_time:    new Date(year, 0, 1).toISOString(),
+      end_time:      new Date(year + 1, 0, 1).toISOString(),
+      statistic_ids: [entity],
+      period:        'month',
+      types:         ['max'],
+      units:         { power: 'kW' }, // normalize regardless of whether the entity reports W, kW, ...
+    };
+    const result = await this._hass.callWS(wsRequest);
+    const stats = result?.[entity] ?? [];
+    return Array.from({ length: 12 }, (_, month) => {
+      const entry = stats.find(s => new Date(s.start).getMonth() === month);
+      return entry?.max ?? null;
+    });
+  }
+
   async _fetchData() {
     this._loading = true;
     this._error   = null;
@@ -501,6 +541,12 @@ class LutarymEnergyCard extends HTMLElement {
       const results = await Promise.all(years.map(y => this._fetchYear(y)));
       this._seriesYears = years;
       this._seriesData  = results;
+
+      if (this._preset.supportsPeakPower && this._config.powerEntity) {
+        this._peakPowerData = await Promise.all(years.map(y => this._fetchPeakPower(y)));
+      } else {
+        this._peakPowerData = [];
+      }
     } catch (err) {
       console.error('[lutarym-energy-card]', err);
       this._error = err.message ?? t(this._hass, 'unknownError');
@@ -620,10 +666,12 @@ class LutarymEnergyCard extends HTMLElement {
     const lp = this._layoutParams(px);
     const rangeMode = this._isRangeMode();
     const kwp = (this._preset.supportsCapacityLine && this._config.kwp) ? this._config.kwp : null;
-    // The kWp line uses its own (differently-unitted) scale on the right —
-    // unlike the earlier min/max case, this one genuinely isn't the same
-    // scale as the left axis, so a second axis earns its keep here.
-    const pad = kwp ? { ...lp.pad, right: lp.pad.right + 34 } : lp.pad;
+    const hasPeakPower = !!(this._preset.supportsPeakPower && this._config.powerEntity);
+    // Both the kWp line and the peak-power markers are in kW/kWp — a
+    // genuinely different unit than the left axis's kWh — so they share
+    // one right-hand scale.
+    const showRightAxis = kwp != null || hasPeakPower;
+    const pad = showRightAxis ? { ...lp.pad, right: lp.pad.right + 34 } : lp.pad;
     const { monthStyle, barRatio } = lp;
     const H = this._effectiveChartHeight(lp.H, px);
     const { fMonth, fAxis, fVal } = this._labelFontSizes(px, H, lp.H);
@@ -658,6 +706,18 @@ class LutarymEnergyCard extends HTMLElement {
     } else {
       const allVals = series.flat().filter(v => v !== null && v >= 0);
       maxVal = this._niceMax(allVals.length ? Math.max(...allVals) : 0);
+    }
+
+    // Right-axis (kW) scale — covers both the static kWp line and the
+    // measured monthly peaks, so a peak that slightly exceeds the nameplate
+    // capacity (e.g. brief overproduction) still fits on the axis.
+    let rightMax = null;
+    if (showRightAxis) {
+      const peakVals = hasPeakPower
+        ? (this._peakPowerData || []).flat().filter(v => v != null && v >= 0)
+        : [];
+      const candidates = kwp != null ? [...peakVals, kwp] : peakVals;
+      rightMax = this._niceMax(candidates.length ? Math.max(...candidates) : (kwp || 1));
     }
 
     const TICKS = px < 280 ? 4 : 5;
@@ -722,6 +782,18 @@ class LutarymEnergyCard extends HTMLElement {
           // Value label only for the current year (otherwise too cluttered with multiple years)
           valLabels += `<text x="${(xBar + barW / 2).toFixed(1)}" y="${(bY - 3).toFixed(1)}" text-anchor="middle" font-size="${fVal}" fill="${colorText}">${primaryVal.toFixed(0)}${this._preset.valueSuffix}</text>`;
         }
+
+        // Monthly peak power — a short tick per bar (not a line across the
+        // whole year), positioned against the shared right kW axis.
+        if (hasPeakPower) {
+          const peakVal = this._peakPowerData[s] ? this._peakPowerData[s][m] : null;
+          if (peakVal != null) {
+            const yPeak = pad.top + plotH - (Math.min(Math.max(peakVal, 0), rightMax) / rightMax) * plotH;
+            const tickW = Math.max(barW * 0.6, 5);
+            const tx = xBar + barW / 2;
+            bars += `<line x1="${(tx - tickW / 2).toFixed(1)}" y1="${yPeak.toFixed(1)}" x2="${(tx + tickW / 2).toFixed(1)}" y2="${yPeak.toFixed(1)}" stroke="${colorText}" stroke-width="2" stroke-linecap="round"/>`;
+          }
+        }
       }
 
       const label  = monthStyle === 'initial' ? MONTHS_INITIAL_L[m] : MONTHS_ABBR_L[m];
@@ -751,18 +823,23 @@ class LutarymEnergyCard extends HTMLElement {
 
     const unitLabel = `<text x="${(pad.left - 4).toFixed(1)}" y="${(pad.top - 10).toFixed(1)}" text-anchor="middle" font-size="${fAxis}" fill="var(--secondary-text-color)">${this._preset.unit}</text>`;
 
-    // Installed capacity (kWp) reference line — own scale on the right,
-    // since kW and the left axis's kWh are not the same unit.
-    let kwpLine = '', unitLabelRight = '';
-    const axesRight = kwp ? `<line x1="${(pad.left + plotW).toFixed(1)}" y1="${pad.top}" x2="${(pad.left + plotW).toFixed(1)}" y2="${(pad.top + plotH).toFixed(1)}" stroke="var(--secondary-text-color)" stroke-width="1"/>` : '';
-    if (kwp) {
-      const rightMax = this._niceMax(kwp);
+    // Right axis (kW) — shared by the installed-capacity line and the
+    // peak-power ticks, since both are in the same unit.
+    let kwpLine = '';
+    const unitLabelRight = showRightAxis
+      ? `<text x="${(pad.left + plotW + 4).toFixed(1)}" y="${(pad.top - 10).toFixed(1)}" text-anchor="start" font-size="${fAxis}" fill="var(--secondary-text-color)">kW</text>`
+      : '';
+    const axesRight = showRightAxis
+      ? `<line x1="${(pad.left + plotW).toFixed(1)}" y1="${pad.top}" x2="${(pad.left + plotW).toFixed(1)}" y2="${(pad.top + plotH).toFixed(1)}" stroke="var(--secondary-text-color)" stroke-width="1"/>`
+      : '';
+    const zeroLabelRight = showRightAxis
+      ? `<text x="${(pad.left + plotW + 6).toFixed(1)}" y="${(pad.top + plotH + 4).toFixed(1)}" text-anchor="start" font-size="${fAxis}" fill="var(--secondary-text-color)">0</text>`
+      : '';
+    if (kwp != null) {
       const yKwp = pad.top + plotH - (Math.min(kwp, rightMax) / rightMax) * plotH;
-      unitLabelRight = `<text x="${(pad.left + plotW + 4).toFixed(1)}" y="${(pad.top - 10).toFixed(1)}" text-anchor="start" font-size="${fAxis}" fill="var(--secondary-text-color)">kWp</text>`;
       kwpLine = `
         <line x1="${pad.left}" y1="${yKwp.toFixed(1)}" x2="${(pad.left + plotW).toFixed(1)}" y2="${yKwp.toFixed(1)}" stroke="${colorText}" stroke-width="1" stroke-dasharray="5 3" opacity="0.85"/>
         <text x="${(pad.left + plotW + 6).toFixed(1)}" y="${(yKwp - 4).toFixed(1)}" text-anchor="start" font-size="${fAxis}" fill="${colorText}">${kwp} kWp</text>
-        <text x="${(pad.left + plotW + 6).toFixed(1)}" y="${(pad.top + plotH + 4).toFixed(1)}" text-anchor="start" font-size="${fAxis}" fill="var(--secondary-text-color)">0</text>
       `;
     }
 
@@ -773,7 +850,7 @@ class LutarymEnergyCard extends HTMLElement {
     `;
 
     return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:${H}px;display:block;">
-      ${grid}${bars}${kwpLine}${valLabels}${xLabels}${yLabels}${unitLabel}${unitLabelRight}${axes}${legend}
+      ${grid}${bars}${kwpLine}${valLabels}${xLabels}${yLabels}${unitLabel}${unitLabelRight}${zeroLabelRight}${axes}${legend}
     </svg>`;
   }
 
@@ -1019,6 +1096,7 @@ class LutarymEnergyCardEditor extends HTMLElement {
     delete preserved.color_prev;
     delete preserved.stat_mode;
     delete preserved.kwp;
+    delete preserved.power_entity;
     preserved.card_type = value;
 
     this._config = preserved;
@@ -1357,6 +1435,16 @@ class LutarymEnergyCardEditor extends HTMLElement {
         'kwp',
         this._config.kwp,
         0, 100, false, null, 0.1, 'kWp',
+      ));
+    }
+
+    if (preset.supportsPeakPower) {
+      form.appendChild(this._row(
+        t(hass, 'editorPowerEntity'),
+        t(hass, 'editorPowerEntityHint'),
+        { entity: {} },
+        'power_entity',
+        this._config.power_entity,
       ));
     }
 
