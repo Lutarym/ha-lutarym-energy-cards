@@ -6,7 +6,7 @@
  *
  * YAML:
  *   type: custom:lutarym-energy-card
- *   card_type: energy      # autarkie | energy | pv | wallbox | wp | klima | akku
+ *   card_type: energy      # autarkie | energy | pv | wallbox | wp | klima | akku | einspeisung
  *   entity: sensor.xyz     # optional, overrides the preset default
  *   title: My Title        # optional, overrides the preset default
  *   color: "#00b4d8"       # optional, overrides the preset default (current year)
@@ -33,6 +33,7 @@ const I18N = {
     editorCardType: 'Card type',
     editorEntity: 'Entity',
     editorEntityHint: 'Optional — default for "{preset}": {entity}',
+    editorEntityRequiredHint: 'Required — no default entity, please select one for your setup',
     editorTitle: 'Title',
     editorTitleHint: 'Optional — default: {title}',
     editorTitleFontSize: 'Title font size',
@@ -66,6 +67,7 @@ const I18N = {
     resetLabel: 'Reset',
     autoLabel: 'Automatic',
     loading: 'Loading data…',
+    notConfigured: 'Select an entity in the card editor to get started.',
     error: 'Error: {msg}',
     unknownError: 'Unknown error',
   },
@@ -73,6 +75,7 @@ const I18N = {
     editorCardType: 'Kartentyp',
     editorEntity: 'Entity',
     editorEntityHint: 'Optional — Standard für "{preset}": {entity}',
+    editorEntityRequiredHint: 'Erforderlich — keine Standard-Entity, bitte eine für deine Anlage auswählen',
     editorTitle: 'Titel',
     editorTitleHint: 'Optional — Standard: {title}',
     editorTitleFontSize: 'Schriftgröße Titel',
@@ -106,6 +109,7 @@ const I18N = {
     resetLabel: 'Zurücksetzen',
     autoLabel: 'Automatisch',
     loading: 'Lade Daten…',
+    notConfigured: 'Wähle im Karten-Editor eine Entity aus, um zu starten.',
     error: 'Fehler: {msg}',
     unknownError: 'Unbekannter Fehler',
   },
@@ -122,6 +126,7 @@ const PRESET_I18N = {
     wp:       { label: 'Heat Pump', title: 'Heat Pump' },
     klima:    { label: 'Air Conditioning', title: 'Air Conditioning' },
     akku:     { label: 'Battery State of Charge', title: 'Battery State of Charge' },
+    einspeisung: { label: 'Grid Feed-in', title: 'Grid Feed-in' },
   },
   de: {
     autarkie: { label: 'Autarkie', title: 'Autarkie' },
@@ -131,6 +136,7 @@ const PRESET_I18N = {
     wp:       { label: 'Wärmepumpe', title: 'Wärmepumpe' },
     klima:    { label: 'Klimaanlage', title: 'Klimaanlage' },
     akku:     { label: 'Akku-Ladezustand', title: 'Akku-Ladezustand' },
+    einspeisung: { label: 'Netzeinspeisung', title: 'PV Netz-Einspeisung' },
   },
 };
 
@@ -234,6 +240,16 @@ const PRESETS = {
     valueSuffix: '%',
     supportsRange: true,     // this preset offers the "Display: Average / Min/max range" dropdown
   },
+  einspeisung: {
+    entity:     '',          // no default — publicly shared card, must not assume anyone's entity naming
+    color:      '#ec4899',
+    colorPrev:  '#888888',
+    unit:       'kWh',
+    statType:   'change',
+    fixedMax:   null,
+    aggregate:  'sum',
+    valueSuffix: '',
+  },
 };
 
 const CARD_TYPE_KEYS = Object.keys(PRESETS);
@@ -317,8 +333,8 @@ class LutarymEnergyCard extends HTMLElement {
       this._lastFetch = 0;
       this._seriesYears = [];
       this._seriesData  = [];
-      this._loading   = true;
-      if (this._hass) this._fetchData();
+      this._loading   = !!this._config.entity;
+      if (this._hass && this._config.entity) this._fetchData();
     }
 
     this._render();
@@ -326,7 +342,7 @@ class LutarymEnergyCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
-    if (Date.now() - this._lastFetch > 3_600_000) {
+    if (this._config?.entity && Date.now() - this._lastFetch > 3_600_000) {
       this._lastFetch = Date.now();
       this._fetchData();
     }
@@ -806,7 +822,9 @@ class LutarymEnergyCard extends HTMLElement {
     const px           = this._width || 0;
 
     let body;
-    if (this._loading) {
+    if (!this._config.entity) {
+      body = `<div class="loading">${t(hass, 'notConfigured')}</div>`;
+    } else if (this._loading) {
       body = `<div class="loading">${t(hass, 'loading')}</div>`;
     } else if (this._error) {
       body = `<div class="error">${t(hass, 'error', { msg: this._error })}</div>`;
@@ -883,7 +901,7 @@ class LutarymEnergyCard extends HTMLElement {
 
     this.shadowRoot.querySelector('ha-card').addEventListener('dblclick', () => {
       this._lastFetch = 0;
-      if (this._hass) this._fetchData();
+      if (this._hass && this._config.entity) this._fetchData();
     });
   }
 
@@ -1254,7 +1272,9 @@ class LutarymEnergyCardEditor extends HTMLElement {
 
     form.appendChild(this._row(
       t(hass, 'editorEntity'),
-      t(hass, 'editorEntityHint', { preset: info.label, entity: preset.entity }),
+      preset.entity
+        ? t(hass, 'editorEntityHint', { preset: info.label, entity: preset.entity })
+        : t(hass, 'editorEntityRequiredHint'),
       { entity: {} },
       'entity',
       this._config.entity,

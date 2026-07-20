@@ -39,7 +39,7 @@ the visual configuration form directly.
 
 ```yaml
 type: custom:lutarym-energy-card
-card_type: pv            # autarkie | energy | pv | wallbox | wp | klima | akku
+card_type: pv            # autarkie | energy | pv | wallbox | wp | klima | akku | einspeisung
 years_back: 2             # optional: 0 | 1 | 2 | 3 — additional previous years (default: 1)
 stat_mode: mean           # optional, only for "akku": mean | minmax (bar stays at 0, min/max as a whisker, no separate axis)
 color: "#f59e0b"         # optional, main color for the current year
@@ -62,9 +62,12 @@ label_font_size: 10       # optional, default: automatic
 | wp | sensor.waermepumpe | Heat Pump | `#ef4444` |
 | klima | sensor.klimaanlage | Air Conditioning | `#06b6d4` |
 | akku | sensor.akku_ladezustand | Battery State of Charge | `#a855f7` |
+| einspeisung | *(none — select your own)* | PV Netz-Einspeisung | `#ec4899` |
 
 The default entities are placeholders — enter your actual entity ID in
-the editor.
+the editor. `einspeisung` has no default at all, since a guessed sensor
+name would never match a real setup; the card shows a short "select an
+entity" hint until one is configured.
 
 ## License
 
