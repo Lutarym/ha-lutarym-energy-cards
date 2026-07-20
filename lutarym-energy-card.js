@@ -6,7 +6,7 @@
  *
  * YAML:
  *   type: custom:lutarym-energy-card
- *   card_type: energy      # autarkie | energy | pv | wallbox | wp | klima
+ *   card_type: energy      # autarkie | energy | pv | wallbox | wp | klima | akku
  *   entity: sensor.xyz     # optional, overrides the preset default
  *   title: My Title        # optional, overrides the preset default
  *   color: "#00b4d8"       # optional, overrides the preset default (current year)
@@ -17,6 +17,10 @@
  *   title_font_size: 14    # optional, title font size in px (default: 14)
  *   label_font_size: 10    # optional, chart label font size in px (default: automatic)
  *   years_back: 1           # optional: 0 | 1 | 2 | 3 — additional previous years, 0 = current year only (default: 1)
+ *   stat_mode: mean         # optional, only for presets with a range option (currently "akku"): mean | minmax
+ *                            # "minmax" draws a floating bar per month from the monthly min to max value,
+ *                            # with a tick marking the mean — more informative than a plain average for
+ *                            # something like a battery state of charge.
  *
  * Added via the UI ("Add Card" → "Energy Card by Lutarym"); the card type
  * plus optional overrides can be chosen conveniently in the visual editor.
@@ -41,6 +45,10 @@ const I18N = {
     yearsBack1: '1 year back (2 years total)',
     yearsBack2: '2 years back (3 years total)',
     yearsBack3: '3 years back (4 years total)',
+    editorStatMode: 'Display',
+    editorStatModeHint: 'How each month is summarized',
+    statModeMean: 'Average',
+    statModeMinMax: 'Min/max range',
     sectionColors: 'Colors',
     colorCurrentYear: 'Current year',
     colorCurrentYearHint: 'Default for "{preset}": {color}',
@@ -77,6 +85,10 @@ const I18N = {
     yearsBack1: '1 Jahr zurück (2 Jahre gesamt)',
     yearsBack2: '2 Jahre zurück (3 Jahre gesamt)',
     yearsBack3: '3 Jahre zurück (4 Jahre gesamt)',
+    editorStatMode: 'Darstellung',
+    editorStatModeHint: 'Wie jeder Monat zusammengefasst wird',
+    statModeMean: 'Durchschnitt',
+    statModeMinMax: 'Min/Max-Bereich',
     sectionColors: 'Farben',
     colorCurrentYear: 'Aktuelles Jahr',
     colorCurrentYearHint: 'Standard für "{preset}": {color}',
@@ -109,6 +121,7 @@ const PRESET_I18N = {
     wallbox:  { label: 'Wallbox', title: 'Wallbox' },
     wp:       { label: 'Heat Pump', title: 'Heat Pump' },
     klima:    { label: 'Air Conditioning', title: 'Air Conditioning' },
+    akku:     { label: 'Battery State of Charge', title: 'Battery State of Charge' },
   },
   de: {
     autarkie: { label: 'Autarkie', title: 'Autarkie' },
@@ -117,6 +130,7 @@ const PRESET_I18N = {
     wallbox:  { label: 'Wallbox', title: 'Wallbox' },
     wp:       { label: 'Wärmepumpe', title: 'Wärmepumpe' },
     klima:    { label: 'Klimaanlage', title: 'Klimaanlage' },
+    akku:     { label: 'Akku-Ladezustand', title: 'Akku-Ladezustand' },
   },
 };
 
@@ -209,6 +223,17 @@ const PRESETS = {
     aggregate:  'sum',
     valueSuffix: '',
   },
+  akku: {
+    entity:     'sensor.akku_ladezustand',
+    color:      '#a855f7',
+    colorPrev:  '#888888',
+    unit:       '%',
+    statType:   'mean',      // default display mode ('mean'); 'minmax' selectable in the editor
+    fixedMax:   100,         // Y-axis fixed 0-100%
+    aggregate:  'avg',
+    valueSuffix: '%',
+    supportsRange: true,     // this preset offers the "Display: Average / Min/max range" dropdown
+  },
 };
 
 const CARD_TYPE_KEYS = Object.keys(PRESETS);
@@ -261,11 +286,14 @@ class LutarymEnergyCard extends HTMLElement {
     const newEntity = config.entity ?? preset.entity;
     const rawYearsBack = config.years_back != null ? Number(config.years_back) : 1;
     const newYearsBack = Math.min(3, Math.max(0, rawYearsBack));
+    // 'minmax' only applies for presets that opt in (supportsRange); otherwise always 'mean'.
+    const newStatMode = (preset.supportsRange && config.stat_mode === 'minmax') ? 'minmax' : 'mean';
     const entityOrTypeChanged =
       !this._config ||
       this._config.card_type !== cardType ||
       this._config.entity !== newEntity ||
-      this._config.yearsBack !== newYearsBack;
+      this._config.yearsBack !== newYearsBack ||
+      this._config.statMode !== newStatMode;
 
     this._config = {
       card_type:  cardType,
@@ -279,6 +307,7 @@ class LutarymEnergyCard extends HTMLElement {
       titleFontSize: Number(config.title_font_size) || 14,
       labelFontSize: config.label_font_size ? Number(config.label_font_size) : null, // null = automatic (responsive)
       yearsBack:  newYearsBack, // 0-3, how many years in addition to the current year are shown
+      statMode:   newStatMode,  // 'mean' | 'minmax' — only meaningful for presets with supportsRange
     };
     this._preset = preset;
 
@@ -332,6 +361,18 @@ class LutarymEnergyCard extends HTMLElement {
         { name: 'entity', selector: { entity: {} } },
         { name: 'title', selector: { text: {} } },
         {
+          name: 'stat_mode',
+          selector: {
+            select: {
+              mode: 'dropdown',
+              options: [
+                { value: 'mean',   label: t(fallbackHass, 'statModeMean') },
+                { value: 'minmax', label: t(fallbackHass, 'statModeMinMax') },
+              ],
+            },
+          },
+        },
+        {
           name: 'years_back',
           selector: {
             select: {
@@ -369,6 +410,7 @@ class LutarymEnergyCard extends HTMLElement {
         card_type: t(fallbackHass, 'editorCardType'),
         entity: t(fallbackHass, 'editorEntity'),
         title: t(fallbackHass, 'editorTitle'),
+        stat_mode: t(fallbackHass, 'editorStatMode'),
         years_back: t(fallbackHass, 'editorYearsBack'),
         color: t(fallbackHass, 'colorCurrentYear'),
         color_prev: t(fallbackHass, 'colorPreviousYears'),
@@ -383,17 +425,25 @@ class LutarymEnergyCard extends HTMLElement {
 
   // ── Data fetching ────────────────────────────────────────────────────
 
+  // True if the current preset+config combination should fetch/render the
+  // "min/max range per month" view instead of a single value per month.
+  _isRangeMode() {
+    return !!(this._preset?.supportsRange && this._config?.statMode === 'minmax');
+  }
+
   async _fetchYear(year) {
-    const statType = this._preset.statType; // 'mean' or 'change'
+    const rangeMode = this._isRangeMode();
+    const statType  = this._preset.statType; // 'mean' or 'change'
+    const types     = rangeMode ? ['mean', 'min', 'max'] : [statType];
     const wsRequest = {
       type:          'recorder/statistics_during_period',
       start_time:    new Date(year, 0, 1).toISOString(),
       end_time:      new Date(year + 1, 0, 1).toISOString(),
       statistic_ids: [this._config.entity],
       period:        'month',
-      types:         [statType],
+      types,
     };
-    if (statType === 'change') {
+    if (!rangeMode && statType === 'change') {
       wsRequest.units = { energy: 'kWh' };
     }
 
@@ -401,7 +451,12 @@ class LutarymEnergyCard extends HTMLElement {
     const stats = result?.[this._config.entity] ?? [];
     return Array.from({ length: 12 }, (_, month) => {
       const entry = stats.find(s => new Date(s.start).getMonth() === month);
-      return entry?.[statType] ?? null;
+      if (!entry) return null;
+      if (rangeMode) {
+        if (entry.min == null && entry.max == null && entry.mean == null) return null;
+        return { mean: entry.mean ?? null, min: entry.min ?? null, max: entry.max ?? null };
+      }
+      return entry[statType] ?? null;
     });
   }
 
@@ -562,10 +617,15 @@ class LutarymEnergyCard extends HTMLElement {
     const colorDim  = this._config.colorDim || (this._config.color + '55');
     const colorText = this._config.colorText || 'var(--primary-text-color)';
 
-    // Max value: fixed (e.g. self-sufficiency 0-100%) or dynamic across all series
+    const rangeMode = this._isRangeMode();
+
+    // Max value: fixed (e.g. self-sufficiency/battery 0-100%) or dynamic across all series
     let maxVal;
     if (this._preset.fixedMax != null) {
       maxVal = this._preset.fixedMax;
+    } else if (rangeMode) {
+      const allMax = series.flat().filter(v => v !== null).map(v => v.max).filter(v => v != null && v >= 0);
+      maxVal = this._niceMax(allMax.length ? Math.max(...allMax) : 0);
     } else {
       const allVals = series.flat().filter(v => v !== null && v >= 0);
       maxVal = this._niceMax(allVals.length ? Math.max(...allVals) : 0);
@@ -596,22 +656,46 @@ class LutarymEnergyCard extends HTMLElement {
           continue;
         }
 
-        if (val === null) {
+        const isEmpty = val === null || (rangeMode && val.min == null && val.max == null && val.mean == null);
+        if (isEmpty) {
           bars += `<rect x="${xBar.toFixed(1)}" y="${(pad.top + plotH - 1).toFixed(1)}" width="${barW.toFixed(1)}" height="1" fill="var(--divider-color)" rx="1"/>`;
           continue;
         }
 
-        const bH = Math.max((val / maxVal) * plotH, 1);
-        const bY = pad.top + plotH - bH;
         const isCurrentMonthOfCurrentSeries = isCurrentSeries && m === currentMonth;
         const fill = isCurrentSeries
           ? (isCurrentMonthOfCurrentSeries ? this._config.color : colorDim)
           : this._seriesColor(s, N);
-        bars += `<rect x="${xBar.toFixed(1)}" y="${bY.toFixed(1)}" width="${barW.toFixed(1)}" height="${bH.toFixed(1)}" fill="${fill}" rx="2"/>`;
 
-        // Value label only for the current year (otherwise too cluttered with multiple years)
-        if (isCurrentSeries && fVal > 0 && val > 0) {
-          valLabels += `<text x="${(xBar + barW / 2).toFixed(1)}" y="${(bY - 3).toFixed(1)}" text-anchor="middle" font-size="${fVal}" fill="${colorText}">${val.toFixed(0)}${this._preset.valueSuffix}</text>`;
+        if (rangeMode) {
+          // Floating bar from min to max, with a contrasting tick marking
+          // the mean — more informative for something like a battery
+          // state of charge than a single monthly average would be.
+          const minV = val.min ?? val.mean ?? 0;
+          const maxV = val.max ?? val.mean ?? 0;
+          const yTop    = pad.top + plotH - (Math.max(maxV, 0) / maxVal) * plotH;
+          const yBottom = pad.top + plotH - (Math.max(minV, 0) / maxVal) * plotH;
+          const bH = Math.max(yBottom - yTop, 2);
+          bars += `<rect x="${xBar.toFixed(1)}" y="${yTop.toFixed(1)}" width="${barW.toFixed(1)}" height="${bH.toFixed(1)}" fill="${fill}" rx="2"/>`;
+
+          if (val.mean != null) {
+            const yMean = pad.top + plotH - (Math.max(val.mean, 0) / maxVal) * plotH;
+            bars += `<rect x="${xBar.toFixed(1)}" y="${(yMean - 1).toFixed(1)}" width="${barW.toFixed(1)}" height="2" fill="${colorText}" opacity="0.85"/>`;
+          }
+
+          // Value label (mean) only for the current year (otherwise too cluttered)
+          if (isCurrentSeries && fVal > 0 && val.mean != null) {
+            valLabels += `<text x="${(xBar + barW / 2).toFixed(1)}" y="${(yTop - 3).toFixed(1)}" text-anchor="middle" font-size="${fVal}" fill="${colorText}">${val.mean.toFixed(0)}${this._preset.valueSuffix}</text>`;
+          }
+        } else {
+          const bH = Math.max((val / maxVal) * plotH, 1);
+          const bY = pad.top + plotH - bH;
+          bars += `<rect x="${xBar.toFixed(1)}" y="${bY.toFixed(1)}" width="${barW.toFixed(1)}" height="${bH.toFixed(1)}" fill="${fill}" rx="2"/>`;
+
+          // Value label only for the current year (otherwise too cluttered with multiple years)
+          if (isCurrentSeries && fVal > 0 && val > 0) {
+            valLabels += `<text x="${(xBar + barW / 2).toFixed(1)}" y="${(bY - 3).toFixed(1)}" text-anchor="middle" font-size="${fVal}" fill="${colorText}">${val.toFixed(0)}${this._preset.valueSuffix}</text>`;
+          }
         }
       }
 
@@ -680,6 +764,16 @@ class LutarymEnergyCard extends HTMLElement {
   _summary(arr) {
     const vals = arr.filter(v => v !== null);
     if (!vals.length) return null;
+    if (this._isRangeMode()) {
+      const means = vals.map(v => v.mean).filter(v => v != null);
+      const mins  = vals.map(v => v.min).filter(v => v != null);
+      const maxs  = vals.map(v => v.max).filter(v => v != null);
+      return {
+        mean: means.length ? means.reduce((a, b) => a + b, 0) / means.length : null,
+        min:  mins.length ? Math.min(...mins) : null,
+        max:  maxs.length ? Math.max(...maxs) : null,
+      };
+    }
     if (this._preset.aggregate === 'avg') {
       return vals.reduce((a, b) => a + b, 0) / vals.length;
     }
@@ -689,6 +783,14 @@ class LutarymEnergyCard extends HTMLElement {
   _formatSummary(val) {
     if (val === null) return '–';
     const unit = this._preset.unit;
+    if (this._isRangeMode()) {
+      const suffix = this._preset.valueSuffix;
+      const meanStr = val.mean != null ? val.mean.toFixed(0) : '–';
+      if (val.min != null && val.max != null) {
+        return `Ø ${meanStr}${suffix} (${val.min.toFixed(0)}–${val.max.toFixed(0)}${suffix})`;
+      }
+      return `Ø ${meanStr}${suffix}`;
+    }
     if (this._preset.aggregate === 'avg') {
       return `Ø ${val.toFixed(1)} ${unit}`;
     }
@@ -871,6 +973,7 @@ class LutarymEnergyCardEditor extends HTMLElement {
     delete preserved.title;
     delete preserved.color;
     delete preserved.color_prev;
+    delete preserved.stat_mode;
     preserved.card_type = value;
 
     this._config = preserved;
@@ -1185,6 +1288,19 @@ class LutarymEnergyCardEditor extends HTMLElement {
         6, 20, true, t(hass, 'autoLabel'),
       ),
     ));
+
+    if (preset.supportsRange) {
+      form.appendChild(this._row(
+        t(hass, 'editorStatMode'),
+        t(hass, 'editorStatModeHint'),
+        { select: { mode: 'dropdown', options: [
+          { value: 'mean',   label: t(hass, 'statModeMean') },
+          { value: 'minmax', label: t(hass, 'statModeMinMax') },
+        ] } },
+        'stat_mode',
+        this._config.stat_mode === 'minmax' ? 'minmax' : 'mean',
+      ));
+    }
 
     form.appendChild(this._row(
       t(hass, 'editorYearsBack'),
