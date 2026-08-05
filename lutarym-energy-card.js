@@ -750,7 +750,7 @@ class LutarymEnergyCard extends HTMLElement {
   _niceMax(val) {
     if (val <= 0) return 100;
     const mag = Math.pow(10, Math.floor(Math.log10(val)));
-    for (const n of [1, 2, 2.5, 5, 10]) {
+    for (const n of [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]) {
       if (n * mag >= val) return n * mag;
     }
     return 10 * mag;
