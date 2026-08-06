@@ -69,6 +69,8 @@ const I18N = {
     yearsBack3: '3 years back (4 years total)',
     editorShowValues: 'Show values in chart',
     editorShowValuesHint: 'The number above each bar — not the axis scale',
+    editorShowLegend: 'Legend inside chart',
+    editorShowLegendHint: 'Small year swatches in the chart — off by default, the summary line above already shows them',
     editorYMax: 'Axis maximum',
     editorYMaxHint: 'Fixed top value for the Y-axis — leave empty for automatic',
     editorYHeadroom: 'Headroom',
@@ -130,6 +132,8 @@ const I18N = {
     yearsBack3: '3 Jahre zurück (4 Jahre gesamt)',
     editorShowValues: 'Zahlenwerte im Diagramm anzeigen',
     editorShowValuesHint: 'Die Zahl über jedem Balken — nicht die Achsen-Skala',
+    editorShowLegend: 'Legende im Diagramm',
+    editorShowLegendHint: 'Kleine Jahres-Marker im Diagramm — Standard aus, die Summenzeile oben zeigt sie bereits',
     editorYMax: 'Achsen-Maximum',
     editorYMaxHint: 'Fester oberer Wert der Y-Achse — leer lassen für automatisch',
     editorYHeadroom: 'Kopffreiheit',
@@ -425,6 +429,9 @@ class LutarymEnergyCard extends HTMLElement {
       // type, purely a rendering choice, default on. Doesn't affect the
       // axis scale or the summary line above the chart.
       showValues: config.show_values !== false,
+      // In-chart year legend (small swatches top-right). Redundant with the
+      // summary line above the chart, so off by default; opt in explicitly.
+      showLegend: config.show_legend === true,
       // Y-axis scaling controls (bar/left axis only; fixed-max presets like
       // autarkie/akku 0-100% are unaffected). yMax: a hard top value — when
       // set, the axis is exactly this, no nice-rounding. yHeadroom: percent of
@@ -511,6 +518,7 @@ class LutarymEnergyCard extends HTMLElement {
           },
         },
         { name: 'show_values', selector: { boolean: {} } },
+        { name: 'show_legend', selector: { boolean: {} } },
         { name: 'y_max', selector: { number: { min: 0, mode: 'box' } } },
         { name: 'y_headroom', selector: { number: { min: 0, max: 200, mode: 'box', unit_of_measurement: '%' } } },
         { name: 'color', selector: { text: { type: 'color' } } },
@@ -540,6 +548,7 @@ class LutarymEnergyCard extends HTMLElement {
         stat_mode: t(fallbackHass, 'editorStatMode'),
         years_back: t(fallbackHass, 'editorYearsBack'),
         show_values: t(fallbackHass, 'editorShowValues'),
+        show_legend: t(fallbackHass, 'editorShowLegend'),
         y_max: t(fallbackHass, 'editorYMax'),
         y_headroom: t(fallbackHass, 'editorYHeadroom'),
         color: t(fallbackHass, 'colorCurrentYear'),
@@ -1145,9 +1154,10 @@ class LutarymEnergyCard extends HTMLElement {
       xLabels += `<text x="${cx.toFixed(1)}" y="${H - 5}" text-anchor="middle" font-size="${fMonth}" font-weight="${weight}" fill="${fcolor}">${label}</text>`;
     }
 
-    // Legend: one entry per displayed year
+    // Legend: one entry per displayed year — opt-in, redundant with the
+    // summary line above the chart.
     let legend = '';
-    if (px >= 280) {
+    if (this._config.showLegend && px >= 280) {
       const ly = pad.top - 6;
       const lx = pad.left + plotW;
       const entryW = N >= 4 ? 44 : 55;
@@ -2063,6 +2073,13 @@ class LutarymEnergyCardEditor extends HTMLElement {
       t(hass, 'editorShowValuesHint'),
       'show_values',
       this._config.show_values !== false,
+    ));
+
+    form.appendChild(this._toggleRow(
+      t(hass, 'editorShowLegend'),
+      t(hass, 'editorShowLegendHint'),
+      'show_legend',
+      this._config.show_legend === true,
     ));
 
     // Axis scaling — available for every card type. For the percentage
