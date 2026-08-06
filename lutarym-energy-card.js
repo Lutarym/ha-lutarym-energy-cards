@@ -69,6 +69,10 @@ const I18N = {
     yearsBack3: '3 years back (4 years total)',
     editorShowValues: 'Show values in chart',
     editorShowValuesHint: 'The number above each bar — not the axis scale',
+    editorYMax: 'Axis maximum',
+    editorYMaxHint: 'Fixed top value for the Y-axis — leave empty for automatic',
+    editorYHeadroom: 'Headroom',
+    editorYHeadroomHint: 'Extra space above the highest bar (automatic mode) — default: 20%',
     editorStatMode: 'Display',
     editorStatModeHint: 'How each month is summarized',
     statModeMean: 'Average',
@@ -126,6 +130,10 @@ const I18N = {
     yearsBack3: '3 Jahre zurück (4 Jahre gesamt)',
     editorShowValues: 'Zahlenwerte im Diagramm anzeigen',
     editorShowValuesHint: 'Die Zahl über jedem Balken — nicht die Achsen-Skala',
+    editorYMax: 'Achsen-Maximum',
+    editorYMaxHint: 'Fester oberer Wert der Y-Achse — leer lassen für automatisch',
+    editorYHeadroom: 'Kopffreiheit',
+    editorYHeadroomHint: 'Zusätzlicher Platz über dem höchsten Balken (Automatik-Modus) — Standard: 20%',
     editorStatMode: 'Darstellung',
     editorStatModeHint: 'Wie jeder Monat zusammengefasst wird',
     statModeMean: 'Durchschnitt',
@@ -417,6 +425,13 @@ class LutarymEnergyCard extends HTMLElement {
       // type, purely a rendering choice, default on. Doesn't affect the
       // axis scale or the summary line above the chart.
       showValues: config.show_values !== false,
+      // Y-axis scaling controls (bar/left axis only; fixed-max presets like
+      // autarkie/akku 0-100% are unaffected). yMax: a hard top value — when
+      // set, the axis is exactly this, no nice-rounding. yHeadroom: percent of
+      // extra space above the highest bar in automatic mode (default 15).
+      yMax: (config.y_max != null && config.y_max !== '') ? Number(config.y_max) : null,
+      yHeadroom: (config.y_headroom != null && config.y_headroom !== '')
+        ? Math.max(0, Number(config.y_headroom)) : null,
     };
     this._preset = preset;
 
@@ -496,6 +511,8 @@ class LutarymEnergyCard extends HTMLElement {
           },
         },
         { name: 'show_values', selector: { boolean: {} } },
+        { name: 'y_max', selector: { number: { min: 0, mode: 'box' } } },
+        { name: 'y_headroom', selector: { number: { min: 0, max: 200, mode: 'box', unit_of_measurement: '%' } } },
         { name: 'color', selector: { text: { type: 'color' } } },
         { name: 'color_prev', selector: { text: { type: 'color' } } },
         { name: 'color_text', selector: { text: { type: 'color' } } },
@@ -523,6 +540,8 @@ class LutarymEnergyCard extends HTMLElement {
         stat_mode: t(fallbackHass, 'editorStatMode'),
         years_back: t(fallbackHass, 'editorYearsBack'),
         show_values: t(fallbackHass, 'editorShowValues'),
+        y_max: t(fallbackHass, 'editorYMax'),
+        y_headroom: t(fallbackHass, 'editorYHeadroom'),
         color: t(fallbackHass, 'colorCurrentYear'),
         color_prev: t(fallbackHass, 'colorPreviousYears'),
         color_text: t(fallbackHass, 'colorTextValues'),
@@ -963,16 +982,28 @@ class LutarymEnergyCard extends HTMLElement {
     const colorDim  = this._config.colorDim || (this._config.color + '55');
     const colorText = this._config.colorText || 'var(--primary-text-color)';
 
-    // Max value: fixed (e.g. self-sufficiency/battery 0-100%) or dynamic across all series
-    let maxVal;
-    if (this._preset.fixedMax != null) {
-      maxVal = this._preset.fixedMax;
-    } else if (rangeMode) {
-      const allMax = series.flat().filter(v => v !== null).map(v => v.max).filter(v => v != null && v >= 0);
-      maxVal = this._niceMax(allMax.length ? Math.max(...allMax) : 0);
-    } else {
+    // Max value priority:
+    //   1. y_max (hard user override) — exact axis top, no rounding, every preset.
+    //   2. fixed presets (autarkie/akku 0-100%) — stay 0-100 UNLESS the user
+    //      explicitly sets a headroom, which switches them to data-zoom too.
+    //   3. dynamic across all series with configurable headroom (default 20%).
+    const explicitHeadroom = this._config.yHeadroom != null;
+    const headroomFactor = 1 + (this._config.yHeadroom ?? 20) / 100;
+    const peakOf = () => {
+      if (rangeMode) {
+        const allMax = series.flat().filter(v => v !== null).map(v => v.max).filter(v => v != null && v >= 0);
+        return allMax.length ? Math.max(...allMax) : 0;
+      }
       const allVals = series.flat().filter(v => v !== null && v >= 0);
-      maxVal = this._niceMax(allVals.length ? Math.max(...allVals) : 0);
+      return allVals.length ? Math.max(...allVals) : 0;
+    };
+    let maxVal;
+    if (this._config.yMax != null && this._config.yMax > 0) {
+      maxVal = this._config.yMax;
+    } else if (this._preset.fixedMax != null && !explicitHeadroom) {
+      maxVal = this._preset.fixedMax;
+    } else {
+      maxVal = this._niceMax(peakOf() * headroomFactor);
     }
 
     // Right-axis scale. For kWp/peak-power it's 0-based (covers the static
@@ -2032,6 +2063,26 @@ class LutarymEnergyCardEditor extends HTMLElement {
       t(hass, 'editorShowValuesHint'),
       'show_values',
       this._config.show_values !== false,
+    ));
+
+    // Axis scaling — available for every card type. For the percentage
+    // presets (autarkie/akku) the axis stays 0-100 until y_max or a
+    // headroom is set, which then zooms the axis to the data.
+    form.appendChild(this._sideBySide(
+      this._numberRow(
+        t(hass, 'editorYMax'),
+        t(hass, 'editorYMaxHint'),
+        'y_max',
+        this._config.y_max,
+        0, 1000000, true, t(hass, 'autoLabel'), 10, '',
+      ),
+      this._numberRow(
+        t(hass, 'editorYHeadroom'),
+        t(hass, 'editorYHeadroomHint'),
+        'y_headroom',
+        this._config.y_headroom,
+        0, 200, true, '20', 5, '%',
+      ),
     ));
 
     const sectionLabel = document.createElement('div');
