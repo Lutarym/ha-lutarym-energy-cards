@@ -8,10 +8,11 @@
  *   type: custom:lutarym-energy-card
  *   card_type: energy      # autarkie | energy | pv | wallbox | wallbox_eff | wp | klima | akku | einspeisung
  *   entity: sensor.xyz     # optional, overrides the preset default
- *   gridfree_entity: sensor.xyz # required for "wallbox_eff": a SECOND energy sensor (kWh) counting only the
- *                          # charging that happened while no grid was drawn. The preset plots the monthly
- *                          # grid-free share as gridfree_entity / entity * 100 on a fixed 0-100 % axis.
- *                          # No template needed — the card divides the two monthly sums itself.
+ *   grid_entity: sensor.xyz # required for "wallbox_eff": the grid draw. May be a POWER sensor (W/kW) or an
+ *                          # ENERGY sensor (kWh). Power is integrated from its recorded hourly means into
+ *                          # monthly import kWh (import only). Monthly efficiency = (1 − grid ÷ entity) × 100
+ *                          # on a fixed 0-100 % axis; no grid draw ⇒ 100 %. entity = total charging kWh.
+ *                          # No template, no extra sensor — the card converts and computes itself.
  *   title: My Title        # optional, overrides the preset default
  *   color: "#00b4d8"       # optional, overrides the preset default (current year)
  *   color_prev: "#888888"  # optional, overrides the preset default (previous year)
@@ -96,8 +97,8 @@ const I18N = {
     tempModeMean: 'Monthly average',
     editorDistanceEntity: 'Distance driven entity',
     editorDistanceEntityHint: 'Optional — odometer/trip sensor, shows a line for km driven per month',
-    editorGridfreeEntity: 'Grid-free charged energy entity',
-    editorGridfreeEntityHint: 'Required — kWh charged while no grid was drawn. Share = this ÷ total wallbox energy',
+    editorGridEntity: 'Grid entity (power W/kW or energy kWh)',
+    editorGridEntityHint: 'Required — grid draw. Power is integrated to monthly import kWh. Efficiency = (1 − grid ÷ charging) × 100',
     sectionColors: 'Colors',
     colorCurrentYear: 'Current year',
     colorCurrentYearHint: 'Default for "{preset}": {color}',
@@ -116,7 +117,7 @@ const I18N = {
     autoLabel: 'Automatic',
     loading: 'Loading data…',
     notConfigured: 'Select an entity in the card editor to get started.',
-    notConfiguredRatio: 'Select the grid-free charged energy entity in the card editor to get started.',
+    notConfiguredRatio: 'Select the grid entity (power or energy) in the card editor to get started.',
     error: 'Error: {msg}',
     unknownError: 'Unknown error',
   },
@@ -162,8 +163,8 @@ const I18N = {
     tempModeMean: 'Monatlicher Durchschnitt',
     editorDistanceEntity: 'Kilometer-Entity',
     editorDistanceEntityHint: 'Optional — Kilometerstand-/Fahrten-Sensor, zeigt eine Linie für gefahrene km pro Monat',
-    editorGridfreeEntity: 'Netzfrei-geladen-Entity',
-    editorGridfreeEntityHint: 'Erforderlich — kWh ohne Netzbezug geladen. Anteil = dies ÷ Wallbox-Gesamtenergie',
+    editorGridEntity: 'Netz-Entity (Leistung W/kW oder Energie kWh)',
+    editorGridEntityHint: 'Erforderlich — Netzbezug. Leistung wird zu Monats-kWh integriert. Effizienz = (1 − Netz ÷ Ladung) × 100',
     sectionColors: 'Farben',
     colorCurrentYear: 'Aktuelles Jahr',
     colorCurrentYearHint: 'Standard für "{preset}": {color}',
@@ -182,7 +183,7 @@ const I18N = {
     autoLabel: 'Automatisch',
     loading: 'Lade Daten…',
     notConfigured: 'Wähle im Karten-Editor eine Entity aus, um zu starten.',
-    notConfiguredRatio: 'Wähle im Karten-Editor die Netzfrei-geladen-Entity aus, um zu starten.',
+    notConfiguredRatio: 'Wähle im Karten-Editor die Netz-Entity (Leistung oder Energie) aus, um zu starten.',
     error: 'Fehler: {msg}',
     unknownError: 'Unbekannter Fehler',
   },
@@ -288,16 +289,14 @@ const PRESETS = {
     supportsDistanceLine: true, // this preset offers the optional "km driven" line overlay
   },
   // Charging efficiency: share of the wallbox charging that happened while NO
-  // grid was drawn (fully PV/self-supplied). Separate preset from "wallbox"
-  // (which stays a plain kWh preset) — this one is a RATIO of two energy
-  // sensors, rendered as a fixed 0-100 % bar chart per month.
-  //   entity           = total wallbox charging energy (kWh)
-  //   gridfree_entity  = the part charged while grid import ~ 0 (kWh)
-  // Monthly value = gridfree_kWh / total_kWh * 100, clamped 0-100. No grid
-  // draw ⇒ 100 %. The card only divides the two monthly sums — the actual
-  // sub-hourly "was grid drawn?" split has to be accumulated live upstream
-  // (see the lutarym_charge_efficiency integration), because HA keeps only
-  // hourly long-term statistics and can't reconstruct it after the fact.
+  // grid was drawn. Separate preset from "wallbox" (which stays a plain kWh
+  // preset). Rendered as a fixed 0-100 % bar chart per month.
+  //   entity       = total wallbox charging energy (kWh)
+  //   grid_entity  = grid draw: POWER (W/kW) or ENERGY (kWh). Power is
+  //                  integrated from recorded hourly means to monthly import
+  //                  kWh (import only). See _fetchImportEnergyYear.
+  // Monthly value = (1 − grid_import_kWh / total_kWh) * 100, clamped 0-100.
+  // No grid draw ⇒ 100 %. All conversion happens in the card; no template.
   wallbox_eff: {
     entity:     'sensor.wallbox_strom_energie',
     color:      '#22c55e',
@@ -307,7 +306,7 @@ const PRESETS = {
     fixedMax:   100,
     aggregate:  'avg',            // summary = average of the monthly shares (like autarkie)
     valueSuffix: '%',
-    isRatio:    true,             // value = gridfreeEntity / entity * 100 per month
+    isRatio:    true,             // value = (1 − grid_import / entity) * 100 per month
   },
   wp: {
     entity:     'sensor.waermepumpe',
@@ -426,7 +425,7 @@ class LutarymEnergyCard extends HTMLElement {
     // for supportsDistanceLine presets.
     const newDistanceEntity = (preset.supportsDistanceLine && config.distance_entity) ? config.distance_entity : '';
     // Numerator entity for ratio presets (wallbox_eff): kWh charged grid-free.
-    const newGridfreeEntity = (preset.isRatio && config.gridfree_entity) ? config.gridfree_entity : '';
+    const newGridfreeEntity = (preset.isRatio && config.grid_entity) ? config.grid_entity : '';
     const entityOrTypeChanged =
       !this._config ||
       this._config.card_type !== cardType ||
@@ -435,7 +434,7 @@ class LutarymEnergyCard extends HTMLElement {
       this._config.temperatureEntity !== newTemperatureEntity ||
       this._config.tempMode !== newTempMode ||
       this._config.distanceEntity !== newDistanceEntity ||
-      this._config.gridfreeEntity !== newGridfreeEntity ||
+      this._config.gridEntity !== newGridfreeEntity ||
       this._config.yearsBack !== newYearsBack ||
       this._config.statMode !== newStatMode;
 
@@ -446,7 +445,7 @@ class LutarymEnergyCard extends HTMLElement {
       temperatureEntity: newTemperatureEntity, // optional second entity (outdoor temp) for the temperature line
       tempMode:   newTempMode, // 'daily' | 'minmax' | 'mean' — how the temperature line is aggregated
       distanceEntity: newDistanceEntity, // optional second entity (km driven) for the distance line
-      gridfreeEntity: newGridfreeEntity, // numerator (grid-free kWh) for ratio presets like wallbox_eff
+      gridEntity: newGridfreeEntity, // numerator (grid-free kWh) for ratio presets like wallbox_eff
       title:      config.title      ?? info.title,
       color:      config.color      ?? preset.color,
       colorPrev:  config.color_prev ?? preset.colorPrev,
@@ -486,7 +485,7 @@ class LutarymEnergyCard extends HTMLElement {
       this._lastFetch = 0;
       this._seriesYears = [];
       this._seriesData  = [];
-      const ratioReady = !this._preset.isRatio || !!this._config.gridfreeEntity;
+      const ratioReady = !this._preset.isRatio || !!this._config.gridEntity;
       this._loading   = !!this._config.entity && ratioReady;
       if (this._hass && this._config.entity && ratioReady) this._fetchData();
     }
@@ -496,7 +495,7 @@ class LutarymEnergyCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
-    const ratioReady = !this._preset?.isRatio || !!this._config?.gridfreeEntity;
+    const ratioReady = !this._preset?.isRatio || !!this._config?.gridEntity;
     if (this._config?.entity && ratioReady && Date.now() - this._lastFetch > 3_600_000) {
       this._lastFetch = Date.now();
       this._fetchData();
@@ -648,7 +647,49 @@ class LutarymEnergyCard extends HTMLElement {
     });
   }
 
-  // Monthly peak (max) instantaneous power from the separate power entity —
+  // Detect whether an entity reports power (W/kW) rather than energy (kWh/Wh),
+  // so the efficiency preset knows to integrate it instead of using change.
+  _entityIsPower(entity) {
+    const unit = this._hass?.states?.[entity]?.attributes?.unit_of_measurement;
+    if (!unit) return false;
+    const u = String(unit).trim().toLowerCase();
+    return u === 'w' || u === 'kw';
+  }
+
+  // Integrate a POWER sensor's recorded statistics into monthly IMPORT energy
+  // (kWh), counting only positive power (max(0, mean)). Uses ONLY the 5-minute
+  // short-term statistics (which HA derives from the raw seconds data) — never
+  // hourly, because within an hour export minutes cancel import minutes and
+  // hide real grid draw. Months with no 5-minute data stay null (shown empty)
+  // rather than being filled with a coarse hourly guess.
+  async _fetchImportEnergyYear(entity, year) {
+    const wsRequest = {
+      type:          'recorder/statistics_during_period',
+      start_time:    new Date(year, 0, 1).toISOString(),
+      end_time:      new Date(year + 1, 0, 1).toISOString(),
+      statistic_ids: [entity],
+      period:        '5minute',
+      types:         ['mean'],
+    };
+    const result = await this._hass.callWS(wsRequest);
+    const rows = result?.[entity] ?? [];
+
+    const unit = String(
+      this._hass?.states?.[entity]?.attributes?.unit_of_measurement || 'W'
+    ).trim().toLowerCase();
+    const toKW = unit === 'kw' ? 1 : 1 / 1000; // normalize mean → kW
+
+    const months = new Array(12).fill(null);
+    for (const r of rows) {
+      const mean = Number(r.mean);
+      if (!Number.isFinite(mean)) continue;
+      const d = new Date(r.start);
+      if (d.getFullYear() !== year) continue;
+      // each 5-minute bucket is 1/12 of an hour
+      months[d.getMonth()] = (months[d.getMonth()] ?? 0) + Math.max(0, mean) * toKW * (5 / 60);
+    }
+    return months;
+  }
   // this is a different measurement than the energy entity above (power vs.
   // cumulative energy), so it needs its own recorder query. Only called when
   // a power entity is actually configured.
@@ -778,17 +819,26 @@ class LutarymEnergyCard extends HTMLElement {
     try {
       const results = await Promise.all(years.map(y => this._fetchYear(y)));
       this._seriesYears = years;
-      // Ratio preset (wallbox_eff): the main fetch is the denominator (total
-      // charging kWh). Fetch the numerator (grid-free kWh) in parallel and turn
-      // each month into a percentage here, so the whole bar pipeline just sees
-      // 0-100 % values. No template — the division happens in the card.
-      if (this._preset.isRatio && this._config.gridfreeEntity) {
-        const numer = await Promise.all(years.map(y => this._fetchYear(y, this._config.gridfreeEntity)));
+      // Efficiency preset (wallbox_eff): main fetch is the total charging kWh
+      // (denominator). The grid entity can be either an ENERGY sensor (kWh) or
+      // a POWER sensor (W/kW) — the card detects the unit and, for power,
+      // integrates the recorded hourly means into monthly grid-import kWh
+      // (import only, i.e. max(0, power)). Monthly efficiency is then
+      //   (1 − grid_import_kWh / total_kWh) · 100, clamped 0..100
+      // so "no grid drawn" reads as 100 %. No template, no extra sensor.
+      if (this._preset.isRatio && this._config.gridEntity) {
+        const gridIsPower = this._entityIsPower(this._config.gridEntity);
+        const grid = await Promise.all(years.map(y =>
+          gridIsPower
+            ? this._fetchImportEnergyYear(this._config.gridEntity, y)
+            : this._fetchYear(y, this._config.gridEntity)
+        ));
         this._seriesData = results.map((denomYear, yi) =>
           denomYear.map((denom, m) => {
-            const num = numer[yi]?.[m];
-            if (denom == null || num == null || denom <= 0) return null;
-            return Math.max(0, Math.min(100, (num / denom) * 100));
+            const g = grid[yi]?.[m];
+            if (denom == null || denom <= 0) return null;
+            const grabbed = (g == null) ? 0 : Math.max(0, g);
+            return Math.max(0, Math.min(100, (1 - grabbed / denom) * 100));
           })
         );
       } else {
@@ -1451,7 +1501,7 @@ class LutarymEnergyCard extends HTMLElement {
     const lastIndex    = years.length - 1;
     const px           = this._width || 0;
 
-    const ratioMissingNumerator = this._preset?.isRatio && !this._config.gridfreeEntity;
+    const ratioMissingNumerator = this._preset?.isRatio && !this._config.gridEntity;
     let body;
     if (!this._config.entity) {
       body = `<div class="loading">${t(hass, 'notConfigured')}</div>`;
@@ -1684,7 +1734,7 @@ class LutarymEnergyCardEditor extends HTMLElement {
     delete preserved.temp_mode;
     delete preserved.distance_entity;
     delete preserved.color_distance;
-    delete preserved.gridfree_entity;
+    delete preserved.grid_entity;
     delete preserved.color_temp;
     preserved.card_type = value;
 
@@ -2116,11 +2166,11 @@ class LutarymEnergyCardEditor extends HTMLElement {
 
     if (preset.isRatio) {
       form.appendChild(this._row(
-        t(hass, 'editorGridfreeEntity'),
-        t(hass, 'editorGridfreeEntityHint'),
+        t(hass, 'editorGridEntity'),
+        t(hass, 'editorGridEntityHint'),
         { entity: {} },
-        'gridfree_entity',
-        this._config.gridfree_entity,
+        'grid_entity',
+        this._config.grid_entity,
       ));
     }
 
