@@ -6,8 +6,12 @@
  *
  * YAML:
  *   type: custom:lutarym-energy-card
- *   card_type: energy      # autarkie | energy | pv | wallbox | wp | klima | akku | einspeisung
+ *   card_type: energy      # autarkie | energy | pv | wallbox | wallbox_pv | wp | klima | akku | einspeisung
  *   entity: sensor.xyz     # optional, overrides the preset default
+ *   pv_entity: sensor.xyz  # required for "wallbox_pv": a SECOND energy sensor (kWh) counting only the
+ *                          # charging that came from PV surplus. This preset plots the monthly PV share
+ *                          # as pv_entity / entity * 100 on a fixed 0-100 % axis (entity = total charging
+ *                          # kWh). No template sensor needed — the card divides the two per month itself.
  *   title: My Title        # optional, overrides the preset default
  *   color: "#00b4d8"       # optional, overrides the preset default (current year)
  *   color_prev: "#888888"  # optional, overrides the preset default (previous year)
@@ -92,6 +96,8 @@ const I18N = {
     tempModeMean: 'Monthly average',
     editorDistanceEntity: 'Distance driven entity',
     editorDistanceEntityHint: 'Optional — odometer/trip sensor, shows a line for km driven per month',
+    editorPvEntity: 'PV-charged energy entity',
+    editorPvEntityHint: 'Required — kWh charged from PV surplus. Share = this ÷ total wallbox energy',
     sectionColors: 'Colors',
     colorCurrentYear: 'Current year',
     colorCurrentYearHint: 'Default for "{preset}": {color}',
@@ -110,6 +116,7 @@ const I18N = {
     autoLabel: 'Automatic',
     loading: 'Loading data…',
     notConfigured: 'Select an entity in the card editor to get started.',
+    notConfiguredRatio: 'Select the PV-charged energy entity in the card editor to get started.',
     error: 'Error: {msg}',
     unknownError: 'Unknown error',
   },
@@ -155,6 +162,8 @@ const I18N = {
     tempModeMean: 'Monatlicher Durchschnitt',
     editorDistanceEntity: 'Kilometer-Entity',
     editorDistanceEntityHint: 'Optional — Kilometerstand-/Fahrten-Sensor, zeigt eine Linie für gefahrene km pro Monat',
+    editorPvEntity: 'PV-Ladeenergie-Entity',
+    editorPvEntityHint: 'Erforderlich — kWh aus PV-Überschuss geladen. Anteil = dies ÷ Wallbox-Gesamtenergie',
     sectionColors: 'Farben',
     colorCurrentYear: 'Aktuelles Jahr',
     colorCurrentYearHint: 'Standard für "{preset}": {color}',
@@ -173,6 +182,7 @@ const I18N = {
     autoLabel: 'Automatisch',
     loading: 'Lade Daten…',
     notConfigured: 'Wähle im Karten-Editor eine Entity aus, um zu starten.',
+    notConfiguredRatio: 'Wähle im Karten-Editor die PV-Ladeenergie-Entity aus, um zu starten.',
     error: 'Fehler: {msg}',
     unknownError: 'Unbekannter Fehler',
   },
@@ -186,6 +196,7 @@ const PRESET_I18N = {
     energy:   { label: 'Power Consumption', title: 'Power Consumption' },
     pv:       { label: 'PV Yield', title: 'PV Yield' },
     wallbox:  { label: 'Wallbox', title: 'Wallbox' },
+    wallbox_pv: { label: 'Wallbox PV Share', title: 'Wallbox PV Share' },
     wp:       { label: 'Heat Pump', title: 'Heat Pump' },
     klima:    { label: 'Air Conditioning', title: 'Air Conditioning' },
     akku:     { label: 'Battery State of Charge', title: 'Battery State of Charge' },
@@ -196,6 +207,7 @@ const PRESET_I18N = {
     energy:   { label: 'Stromverbrauch', title: 'Stromverbrauch' },
     pv:       { label: 'PV Ertrag', title: 'PV Ertrag' },
     wallbox:  { label: 'Wallbox', title: 'Wallbox' },
+    wallbox_pv: { label: 'Wallbox PV-Anteil', title: 'Wallbox PV-Anteil' },
     wp:       { label: 'Wärmepumpe', title: 'Wärmepumpe' },
     klima:    { label: 'Klimaanlage', title: 'Klimaanlage' },
     akku:     { label: 'Akku-Ladezustand', title: 'Akku-Ladezustand' },
@@ -274,6 +286,24 @@ const PRESETS = {
     aggregate:  'sum',
     valueSuffix: '',
     supportsDistanceLine: true, // this preset offers the optional "km driven" line overlay
+  },
+  // Charging efficiency: what share of the wallbox charging came from PV.
+  // Separate preset from "wallbox" (which stays a plain kWh preset) — this one
+  // is a RATIO of two energy sensors, rendered as a fixed 0-100 % bar chart.
+  //   entity      = denominator: total wallbox charging energy (kWh)
+  //   pv_entity   = numerator:   the part of it charged from PV surplus (kWh)
+  // Monthly value = pv_kWh / total_kWh * 100, clamped to 0-100. No template
+  // sensor needed — the card does the division per month itself.
+  wallbox_pv: {
+    entity:     'sensor.wallbox',  // denominator default (same as the wallbox preset's total)
+    color:      '#22c55e',
+    colorPrev:  '#888888',
+    unit:       '%',
+    statType:   'change',
+    fixedMax:   100,
+    aggregate:  'avg',            // summary = average of the monthly shares (like the autarkie preset)
+    valueSuffix: '%',
+    isRatio:    true,              // value = numeratorEntity / entity * 100 per month
   },
   wp: {
     entity:     'sensor.waermepumpe',
@@ -391,6 +421,9 @@ class LutarymEnergyCard extends HTMLElement {
     // so it's fetched the same way ('change'/sum per month), only meaningful
     // for supportsDistanceLine presets.
     const newDistanceEntity = (preset.supportsDistanceLine && config.distance_entity) ? config.distance_entity : '';
+    // Numerator entity for ratio presets (e.g. wallbox_pv): the kWh charged
+    // from PV. Only meaningful when the preset is a ratio type.
+    const newPvEntity = (preset.isRatio && config.pv_entity) ? config.pv_entity : '';
     const entityOrTypeChanged =
       !this._config ||
       this._config.card_type !== cardType ||
@@ -399,6 +432,7 @@ class LutarymEnergyCard extends HTMLElement {
       this._config.temperatureEntity !== newTemperatureEntity ||
       this._config.tempMode !== newTempMode ||
       this._config.distanceEntity !== newDistanceEntity ||
+      this._config.pvEntity !== newPvEntity ||
       this._config.yearsBack !== newYearsBack ||
       this._config.statMode !== newStatMode;
 
@@ -409,6 +443,7 @@ class LutarymEnergyCard extends HTMLElement {
       temperatureEntity: newTemperatureEntity, // optional second entity (outdoor temp) for the temperature line
       tempMode:   newTempMode, // 'daily' | 'minmax' | 'mean' — how the temperature line is aggregated
       distanceEntity: newDistanceEntity, // optional second entity (km driven) for the distance line
+      pvEntity:   newPvEntity, // numerator entity (PV-charged kWh) for ratio presets like wallbox_pv
       title:      config.title      ?? info.title,
       color:      config.color      ?? preset.color,
       colorPrev:  config.color_prev ?? preset.colorPrev,
@@ -448,8 +483,9 @@ class LutarymEnergyCard extends HTMLElement {
       this._lastFetch = 0;
       this._seriesYears = [];
       this._seriesData  = [];
-      this._loading   = !!this._config.entity;
-      if (this._hass && this._config.entity) this._fetchData();
+      const ratioReady = !this._preset.isRatio || !!this._config.pvEntity;
+      this._loading   = !!this._config.entity && ratioReady;
+      if (this._hass && this._config.entity && ratioReady) this._fetchData();
     }
 
     this._render();
@@ -457,7 +493,8 @@ class LutarymEnergyCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
-    if (this._config?.entity && Date.now() - this._lastFetch > 3_600_000) {
+    const ratioReady = !this._preset?.isRatio || !!this._config?.pvEntity;
+    if (this._config?.entity && ratioReady && Date.now() - this._lastFetch > 3_600_000) {
       this._lastFetch = Date.now();
       this._fetchData();
     }
@@ -570,7 +607,7 @@ class LutarymEnergyCard extends HTMLElement {
     return !!(this._preset?.supportsRange && this._config?.statMode === 'minmax');
   }
 
-  async _fetchYear(year) {
+  async _fetchYear(year, entity = this._config.entity) {
     const rangeMode = this._isRangeMode();
     const statType  = this._preset.statType; // 'mean' or 'change'
     const types     = rangeMode ? ['mean', 'min', 'max'] : [statType];
@@ -578,7 +615,7 @@ class LutarymEnergyCard extends HTMLElement {
       type:          'recorder/statistics_during_period',
       start_time:    new Date(year, 0, 1).toISOString(),
       end_time:      new Date(year + 1, 0, 1).toISOString(),
-      statistic_ids: [this._config.entity],
+      statistic_ids: [entity],
       period:        'month',
       types,
     };
@@ -587,7 +624,7 @@ class LutarymEnergyCard extends HTMLElement {
     }
 
     const result = await this._hass.callWS(wsRequest);
-    const stats = result?.[this._config.entity] ?? [];
+    const stats = result?.[entity] ?? [];
     return Array.from({ length: 12 }, (_, month) => {
       // WICHTIG: sowohl Monat als auch Jahr prüfen, nicht nur Monat -
       // sonst kann bei einer inklusiven end_time-Grenze der Recorder-API
@@ -738,7 +775,24 @@ class LutarymEnergyCard extends HTMLElement {
     try {
       const results = await Promise.all(years.map(y => this._fetchYear(y)));
       this._seriesYears = years;
-      this._seriesData  = results;
+      // Ratio presets (e.g. wallbox_pv): the main fetch above is the
+      // denominator (total kWh). Fetch the numerator (PV-charged kWh) in
+      // parallel and turn each month into a percentage right here, so the
+      // whole downstream bar-rendering pipeline just sees 0-100 % values —
+      // no template sensor involved, the division happens in the card.
+      if (this._preset.isRatio && this._config.pvEntity) {
+        const numer = await Promise.all(years.map(y => this._fetchYear(y, this._config.pvEntity)));
+        this._seriesData = results.map((denomYear, yi) =>
+          denomYear.map((denom, m) => {
+            const num = numer[yi]?.[m];
+            if (denom == null || num == null || denom <= 0) return null;
+            const pct = (num / denom) * 100;
+            return Math.max(0, Math.min(100, pct));
+          })
+        );
+      } else {
+        this._seriesData = results;
+      }
 
       if (this._preset.supportsPeakPower && this._config.powerEntity) {
         this._peakPowerData = await Promise.all(years.map(y => this._fetchPeakPower(y)));
@@ -1396,9 +1450,12 @@ class LutarymEnergyCard extends HTMLElement {
     const lastIndex    = years.length - 1;
     const px           = this._width || 0;
 
+    const ratioMissingNumerator = this._preset?.isRatio && !this._config.pvEntity;
     let body;
     if (!this._config.entity) {
       body = `<div class="loading">${t(hass, 'notConfigured')}</div>`;
+    } else if (ratioMissingNumerator) {
+      body = `<div class="loading">${t(hass, 'notConfiguredRatio')}</div>`;
     } else if (this._loading) {
       body = `<div class="loading">${t(hass, 'loading')}</div>`;
     } else if (this._error) {
@@ -1626,6 +1683,7 @@ class LutarymEnergyCardEditor extends HTMLElement {
     delete preserved.temp_mode;
     delete preserved.distance_entity;
     delete preserved.color_distance;
+    delete preserved.pv_entity;
     delete preserved.color_temp;
     preserved.card_type = value;
 
@@ -2052,6 +2110,16 @@ class LutarymEnergyCardEditor extends HTMLElement {
         { entity: {} },
         'distance_entity',
         this._config.distance_entity,
+      ));
+    }
+
+    if (preset.isRatio) {
+      form.appendChild(this._row(
+        t(hass, 'editorPvEntity'),
+        t(hass, 'editorPvEntityHint'),
+        { entity: {} },
+        'pv_entity',
+        this._config.pv_entity,
       ));
     }
 
