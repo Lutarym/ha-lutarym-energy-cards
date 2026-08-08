@@ -59,9 +59,11 @@ const I18N = {
     editorCardType: 'Card type',
     rmDefaultTitle: 'Room Energy Consumption',
     rmTotalLabel: 'Total consumption {year}',
+    rmRoomsSumLabel: 'Rooms total {year}',
     rmOtherLabel: 'Other',
     rmWsError: 'WebSocket error: {msg}',
-    rmEditorTotalEntity: 'Total energy entity (required)',
+    rmEditorTotalEntity: 'Total energy entity (optional)',
+    rmEditorTotalHint: 'Leave empty to compare rooms only (share of rooms sum, no "Other"). Set a whole-house meter to show "Other" = total − rooms.',
     rmRoomsSectionLabel: 'Rooms ({count}/10)',
     rmRoomsHint: 'Up to 10 rooms, each with a freely chosen label and its own energy entity.',
     rmRoomHeaderLabel: 'Room {n}',
@@ -168,9 +170,11 @@ const I18N = {
     editorCardType: 'Kartentyp',
     rmDefaultTitle: 'Stromverbrauch Räume',
     rmTotalLabel: 'Gesamtverbrauch {year}',
+    rmRoomsSumLabel: 'Summe Räume {year}',
     rmOtherLabel: 'Sonstige',
     rmWsError: 'WebSocket-Fehler: {msg}',
-    rmEditorTotalEntity: 'Gesamt-Energie-Entity (Pflicht)',
+    rmEditorTotalEntity: 'Gesamt-Energie-Entity (optional)',
+    rmEditorTotalHint: 'Leer lassen = nur Räume vergleichen (Anteil an Raum-Summe, kein "Sonstiges"). Gesamtzähler setzen = "Sonstiges" = Gesamt − Räume.',
     rmRoomsSectionLabel: 'Räume ({count}/10)',
     rmRoomsHint: 'Bis zu 10 Räume, jeweils mit frei wählbarer Beschriftung und zugehöriger Energie-Entity.',
     rmRoomHeaderLabel: 'Raum {n}',
@@ -595,7 +599,7 @@ class LutarymEnergyCard extends HTMLElement {
       this._config = {
         card_type: cardType,
         total_entity: config.total_entity || '',
-        entity: config.total_entity || '', // notConfigured check
+        entity: config.total_entity || (roomsIn.length ? '__rooms__' : ''), // notConfigured check
         rooms: roomsIn.map(r => ({ name: r.name || '', entity: r.entity || '', power_entity: r.power_entity || '' })),
         title: config.title ?? presetInfo(this._hass, cardType).title,
         titleFontSize: Number(config.title_font_size) || 14,
@@ -603,7 +607,7 @@ class LutarymEnergyCard extends HTMLElement {
         color: config.color ?? preset.color,
       };
       if (changed) { this._roomsData = null; this._lastFetch = 0; }
-      if (changed && this._hass && this._config.total_entity) this._fetchRooms();
+      if (changed && this._hass && (this._config.total_entity || this._config.rooms.length)) this._fetchRooms();
       this._render();
       return;
     }
@@ -710,7 +714,7 @@ class LutarymEnergyCard extends HTMLElement {
       return;
     }
     if (this._isRooms) {
-      if (this._config?.total_entity
+      if ((this._config?.total_entity || this._config?.rooms?.length)
           && Date.now() - this._lastFetch > 15 * 60 * 1000) {
         this._lastFetch = Date.now();
         this._fetchRooms();
@@ -1166,16 +1170,17 @@ class LutarymEnergyCard extends HTMLElement {
   }
 
   async _fetchRooms() {
-    if (!this._hass || !this._config?.total_entity) return;
+    if (!this._hass || (!this._config?.total_entity && !this._config?.rooms?.length)) return;
     if (this._roomsLoading) return;
     this._roomsLoading = true;
     try {
       const roomList = this._config.rooms || [];
-      const entities = [this._config.total_entity, ...roomList.map(r => r.entity)];
-      const results  = await Promise.all(entities.map(e => this._roomYearKwh(e)));
+      const totalKwh = this._config.total_entity ? await this._roomYearKwh(this._config.total_entity) : null;
+      const roomKwh  = await Promise.all(roomList.map(r => this._roomYearKwh(r.entity)));
       this._roomsData = {
-        total: results[0],
-        rooms: roomList.map((r, i) => ({ name: r.name, kwh: results[i + 1] })),
+        total: totalKwh,
+        hasTotal: !!this._config.total_entity,
+        rooms: roomList.map((r, i) => ({ name: r.name, kwh: roomKwh[i] })),
       };
     } catch (e) {
       this._roomsData = { error: t(this._hass, 'rmWsError', { msg: e.message }) };
@@ -1579,14 +1584,20 @@ class LutarymEnergyCard extends HTMLElement {
     let rowsHtml = '';
     let otherHtml = '';
 
-    if (!cfg.total_entity) {
+    if (!cfg.total_entity && !(cfg.rooms && cfg.rooms.length)) {
       rowsHtml = `<div class="rm-empty">${t(hass, 'notConfigured')}</div>`;
     } else if (data && data.error) {
       totalStr = '!';
       rowsHtml = `<div class="rm-empty">${data.error}</div>`;
     } else if (data) {
-      const total = data.total;
-      totalStr = (total !== null) ? fmt(total, 0, 1) : '–';
+      const hasTotal = !!data.hasTotal && data.total !== null;
+      const roomSum  = (data.rooms || []).reduce((a, r) => a + (r.kwh ?? 0), 0);
+      // Base for percentages: real total when given, else the sum of rooms.
+      const base = hasTotal ? data.total : (roomSum > 0 ? roomSum : null);
+      // Big number: total when given, else the rooms' sum.
+      const heroVal = hasTotal ? data.total : roomSum;
+      totalStr = (heroVal !== null && heroVal !== undefined) ? fmt(heroVal, 0, 1) : '–';
+      this._rmHeroLabel = hasTotal ? t(hass, 'rmTotalLabel', { year }) : t(hass, 'rmRoomsSumLabel', { year });
       const bar = (pct) => `<div class="rm-barwrap"><div class="rm-bar" style="width:${Math.min(100, pct)}%;background:${accent}"></div></div>`;
 
       // Pair each room with its config (for power_entity) and sort by yearly
@@ -1603,7 +1614,7 @@ class LutarymEnergyCard extends HTMLElement {
         let kwhStr = '–', pctStr = '–', pct = 0;
         if (room.kwh !== null) {
           kwhStr = fmt(room.kwh, 0, 1) + ' kWh';
-          if (total && total > 0) { pct = (room.kwh / total) * 100; pctStr = fmt(pct, 1) + ' %'; }
+          if (base && base > 0) { pct = (room.kwh / base) * 100; pctStr = fmt(pct, 1) + ' %'; }
         }
         return `<div class="rm-row">
           <div class="rm-namecell"><span class="rm-name">${room.name || ''}</span>${wattHtml}</div>
@@ -1613,14 +1624,14 @@ class LutarymEnergyCard extends HTMLElement {
         </div>`;
       }).join('');
 
-      const roomSum = (data.rooms || []).reduce((a, r) => a + (r.kwh ?? 0), 0);
+      // "Other" is only meaningful with a real total meter: total − listed rooms.
       const hasRooms = !!(data.rooms && data.rooms.length);
-      const other = (total !== null && hasRooms) ? Math.max(0, total - roomSum) : null;
+      const other = (hasTotal && hasRooms) ? Math.max(0, data.total - roomSum) : null;
       let oKwh = '–', oPct = '–', oPctV = 0;
-      if (other !== null && total && total > 0) {
-        oPctV = (other / total) * 100; oKwh = fmt(other, 0, 1) + ' kWh'; oPct = fmt(oPctV, 1) + ' %';
+      if (other !== null && data.total > 0) {
+        oPctV = (other / data.total) * 100; oKwh = fmt(other, 0, 1) + ' kWh'; oPct = fmt(oPctV, 1) + ' %';
       }
-      otherHtml = hasRooms ? `<div class="rm-row rm-other">
+      otherHtml = (hasTotal && hasRooms) ? `<div class="rm-row rm-other">
         <div class="rm-namecell"><span class="rm-name">${t(hass, 'rmOtherLabel')}</span></div>
         <div class="rm-barwrap"><div class="rm-bar rm-otherbar" style="width:${Math.min(100, oPctV)}%"></div></div>
         <div class="rm-kwh">${oKwh}</div>
@@ -1655,7 +1666,7 @@ class LutarymEnergyCard extends HTMLElement {
       </style>
       <ha-card>
         <div class="rm-title">${titleText}</div>
-        <div><div class="rm-totlabel">${t(hass, 'rmTotalLabel', { year })}</div>
+        <div><div class="rm-totlabel">${this._rmHeroLabel || t(hass, 'rmTotalLabel', { year })}</div>
           <div><span class="rm-totval">${totalStr}</span><span class="rm-totunit">kWh</span></div></div>
         <div class="rm-divider"></div>
         ${rowsHtml}
@@ -2413,7 +2424,7 @@ class LutarymEnergyCardEditor extends HTMLElement {
 
     // Total entity
     form.appendChild(this._row(
-      t(hass, 'rmEditorTotalEntity'), null, { entity: {} },
+      t(hass, 'rmEditorTotalEntity'), t(hass, 'rmEditorTotalHint'), { entity: {} },
       'total_entity', cfg.total_entity,
     ));
     // Title
