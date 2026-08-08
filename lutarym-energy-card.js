@@ -60,6 +60,8 @@ const I18N = {
     rmDefaultTitle: 'Room Energy Consumption',
     rmTotalLabel: 'Total consumption {year}',
     rmRoomsSumLabel: 'Rooms total {year}',
+    rmGridLabel: 'Grid import',
+    rmPvUsedLabel: 'PV self-used',
     rmOtherLabel: 'Other',
     rmWsError: 'WebSocket error: {msg}',
     rmEditorTotalEntity: 'Total energy entity (optional)',
@@ -174,6 +176,8 @@ const I18N = {
     rmDefaultTitle: 'Stromverbrauch Räume',
     rmTotalLabel: 'Gesamtverbrauch {year}',
     rmRoomsSumLabel: 'Summe Räume {year}',
+    rmGridLabel: 'Netzbezug',
+    rmPvUsedLabel: 'PV-Eigenverbrauch',
     rmOtherLabel: 'Sonstige',
     rmWsError: 'WebSocket-Fehler: {msg}',
     rmEditorTotalEntity: 'Gesamt-Energie-Entity (optional)',
@@ -1196,12 +1200,16 @@ class LutarymEnergyCard extends HTMLElement {
       const roomKwh = await Promise.all(roomList.map(r => this._roomYearKwh(r.entity)));
       // True house consumption = grid import + PV self-consumed (PV − feed-in).
       let totalKwh = grid;
+      let pvSelf = null;
       if (wantPv && grid !== null && pv !== null && feed !== null) {
-        totalKwh = Math.max(0, grid + pv - feed);
+        pvSelf = Math.max(0, pv - feed);
+        totalKwh = Math.max(0, grid + pvSelf);
       }
       this._roomsData = {
         total: totalKwh,
         hasTotal: !!this._config.total_entity,
+        grid: wantPv ? grid : null,
+        pvSelf,
         rooms: roomList.map((r, i) => ({ name: r.name, kwh: roomKwh[i] })),
       };
     } catch (e) {
@@ -1605,6 +1613,7 @@ class LutarymEnergyCard extends HTMLElement {
     let totalStr = '…';
     let rowsHtml = '';
     let otherHtml = '';
+    let splitHtml = '';
 
     if (!cfg.total_entity && !(cfg.rooms && cfg.rooms.length)) {
       rowsHtml = `<div class="rm-empty">${t(hass, 'notConfigured')}</div>`;
@@ -1620,6 +1629,12 @@ class LutarymEnergyCard extends HTMLElement {
       const heroVal = hasTotal ? data.total : roomSum;
       totalStr = (heroVal !== null && heroVal !== undefined) ? fmt(heroVal, 0, 1) : '–';
       this._rmHeroLabel = hasTotal ? t(hass, 'rmTotalLabel', { year }) : t(hass, 'rmRoomsSumLabel', { year });
+      if (hasTotal && data.grid !== null && data.pvSelf !== null) {
+        splitHtml = `<div class="rm-split">
+          <div class="rm-splitcell"><div class="rm-splitlabel">${t(hass, 'rmGridLabel')}</div><div class="rm-splitval">${fmt(data.grid, 0, 1)} kWh</div></div>
+          <div class="rm-splitcell"><div class="rm-splitlabel">${t(hass, 'rmPvUsedLabel')}</div><div class="rm-splitval" style="color:${accent}">${fmt(data.pvSelf, 0, 1)} kWh</div></div>
+        </div>`;
+      }
       const bar = (pct) => `<div class="rm-barwrap"><div class="rm-bar" style="width:${Math.min(100, pct)}%;background:${accent}"></div></div>`;
 
       // Pair each room with its config (for power_entity) and sort by yearly
@@ -1672,6 +1687,10 @@ class LutarymEnergyCard extends HTMLElement {
         .rm-totval { font-size:2.2rem; font-weight:600; line-height:1.05; color:var(--primary-text-color); font-variant-numeric:tabular-nums; }
         .rm-totunit { font-size:.8rem; color:var(--secondary-text-color); margin-left:4px; }
         .rm-divider { height:1px; background:var(--divider-color, rgba(128,128,128,.2)); margin:14px 0; }
+        .rm-split { display:flex; gap:10px; margin-top:10px; }
+        .rm-splitcell { flex:1; background:var(--secondary-background-color, rgba(128,128,128,.08)); border-radius:8px; padding:8px 10px; }
+        .rm-splitlabel { font-size:.72rem; color:var(--secondary-text-color); margin-bottom:2px; }
+        .rm-splitval { font-size:1.1rem; font-weight:600; color:var(--primary-text-color); font-variant-numeric:tabular-nums; }
         .rm-row { display:grid; grid-template-columns:1fr 1fr auto auto; align-items:center; gap:8px; padding:5px 0; border-bottom:1px solid var(--divider-color, rgba(128,128,128,.1)); }
         .rm-row:last-child { border-bottom:none; }
         .rm-namecell { display:flex; flex-direction:column; gap:1px; overflow:hidden; }
@@ -1690,6 +1709,7 @@ class LutarymEnergyCard extends HTMLElement {
         <div class="rm-title">${titleText}</div>
         <div><div class="rm-totlabel">${this._rmHeroLabel || t(hass, 'rmTotalLabel', { year })}</div>
           <div><span class="rm-totval">${totalStr}</span><span class="rm-totunit">kWh</span></div></div>
+        ${splitHtml}
         <div class="rm-divider"></div>
         ${rowsHtml}
         ${otherHtml}
