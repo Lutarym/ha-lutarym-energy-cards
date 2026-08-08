@@ -445,7 +445,8 @@ class LutarymEnergyCard extends HTMLElement {
       temperatureEntity: newTemperatureEntity, // optional second entity (outdoor temp) for the temperature line
       tempMode:   newTempMode, // 'daily' | 'minmax' | 'mean' — how the temperature line is aggregated
       distanceEntity: newDistanceEntity, // optional second entity (km driven) for the distance line
-      gridEntity: newGridfreeEntity, // numerator (grid-free kWh) for ratio presets like wallbox_eff
+      gridEntity: newGridfreeEntity, // grid entity (energy kWh or power W) for wallbox_eff
+      gridImportNegative: config.grid_import_negative === true, // some meters sign import negative
       title:      config.title      ?? info.title,
       color:      config.color      ?? preset.color,
       colorPrev:  config.color_prev ?? preset.colorPrev,
@@ -656,39 +657,57 @@ class LutarymEnergyCard extends HTMLElement {
     return u === 'w' || u === 'kw';
   }
 
-  // Integrate a POWER sensor's recorded statistics into monthly IMPORT energy
-  // (kWh), counting only positive power (max(0, mean)). Uses ONLY the 5-minute
-  // short-term statistics (which HA derives from the raw seconds data) — never
-  // hourly, because within an hour export minutes cancel import minutes and
-  // hide real grid draw. Months with no 5-minute data stay null (shown empty)
-  // rather than being filled with a coarse hourly guess.
-  async _fetchImportEnergyYear(entity, year) {
-    const wsRequest = {
+  // Per-hour ENERGY (kWh) from a cumulative energy sensor's exact hourly
+  // "change" statistic. Returned as Map(hourStartISO → kWh). Kept forever by
+  // HA for sum sensors, so this spans the full history — not just ~11 days.
+  async _fetchEnergyHours(entity, year) {
+    const res = await this._hass.callWS({
       type:          'recorder/statistics_during_period',
       start_time:    new Date(year, 0, 1).toISOString(),
       end_time:      new Date(year + 1, 0, 1).toISOString(),
       statistic_ids: [entity],
-      period:        '5minute',
-      types:         ['mean'],
-    };
-    const result = await this._hass.callWS(wsRequest);
-    const rows = result?.[entity] ?? [];
+      period:        'hour',
+      types:         ['change'],
+      units:         { energy: 'kWh' },
+    });
+    const rows = res?.[entity] ?? [];
+    const map = new Map();
+    for (const r of rows) {
+      const v = Number(r.change);
+      if (!Number.isFinite(v)) continue;
+      if (new Date(r.start).getFullYear() !== year) continue;
+      map.set(r.start, v);
+    }
+    return map;
+  }
 
+  // Per-hour grid IMPORT energy (kWh) derived from a POWER sensor's hourly
+  // mean, import only. Sign is configurable because some meters report import
+  // as negative. Returned as Map(hourStartISO → kWh). Only used when the grid
+  // entity is a power sensor; an energy (kWh) grid entity uses _fetchEnergyHours.
+  async _fetchPowerImportHours(entity, year) {
+    const res = await this._hass.callWS({
+      type:          'recorder/statistics_during_period',
+      start_time:    new Date(year, 0, 1).toISOString(),
+      end_time:      new Date(year + 1, 0, 1).toISOString(),
+      statistic_ids: [entity],
+      period:        'hour',
+      types:         ['mean'],
+    });
+    const rows = res?.[entity] ?? [];
     const unit = String(
       this._hass?.states?.[entity]?.attributes?.unit_of_measurement || 'W'
     ).trim().toLowerCase();
-    const toKW = unit === 'kw' ? 1 : 1 / 1000; // normalize mean → kW
-
-    const months = new Array(12).fill(null);
+    const toKW = unit === 'kw' ? 1 : 1 / 1000;
+    const sign = this._config.gridImportNegative ? -1 : 1;
+    const map = new Map();
     for (const r of rows) {
       const mean = Number(r.mean);
       if (!Number.isFinite(mean)) continue;
-      const d = new Date(r.start);
-      if (d.getFullYear() !== year) continue;
-      // each 5-minute bucket is 1/12 of an hour
-      months[d.getMonth()] = (months[d.getMonth()] ?? 0) + Math.max(0, mean) * toKW * (5 / 60);
+      if (new Date(r.start).getFullYear() !== year) continue;
+      map.set(r.start, Math.max(0, mean * sign) * toKW); // one-hour bucket → kWh
     }
-    return months;
+    return map;
   }
   // this is a different measurement than the energy entity above (power vs.
   // cumulative energy), so it needs its own recorder query. Only called when
@@ -819,28 +838,38 @@ class LutarymEnergyCard extends HTMLElement {
     try {
       const results = await Promise.all(years.map(y => this._fetchYear(y)));
       this._seriesYears = years;
-      // Efficiency preset (wallbox_eff): main fetch is the total charging kWh
-      // (denominator). The grid entity can be either an ENERGY sensor (kWh) or
-      // a POWER sensor (W/kW) — the card detects the unit and, for power,
-      // integrates the recorded hourly means into monthly grid-import kWh
-      // (import only, i.e. max(0, power)). Monthly efficiency is then
-      //   (1 − grid_import_kWh / total_kWh) · 100, clamped 0..100
-      // so "no grid drawn" reads as 100 %. No template, no extra sensor.
+      // Efficiency preset (wallbox_eff): grid-free share of the charging,
+      // computed the marginal way per HOUR (both sensors are cumulative kWh
+      // and HA keeps their hourly "change" forever, exact — not averaged):
+      //   netzfrei_h = max(0, wallbox_h − hausbezug_h)   per hour
+      //   month %    = Σ netzfrei_h / Σ wallbox_h · 100
+      // i.e. when the wallbox drew more than the grid imported in that hour,
+      // the surplus came from PV/self. Whole-house grid import bigger than the
+      // charging ⇒ that hour counts as fully grid. If the grid entity is a
+      // POWER sensor instead of energy, its hourly mean is converted to import
+      // energy first. All in the card — no template, no extra sensor.
       if (this._preset.isRatio && this._config.gridEntity) {
         const gridIsPower = this._entityIsPower(this._config.gridEntity);
-        const grid = await Promise.all(years.map(y =>
-          gridIsPower
-            ? this._fetchImportEnergyYear(this._config.gridEntity, y)
-            : this._fetchYear(y, this._config.gridEntity)
-        ));
-        this._seriesData = results.map((denomYear, yi) =>
-          denomYear.map((denom, m) => {
-            const g = grid[yi]?.[m];
-            if (denom == null || denom <= 0) return null;
-            const grabbed = (g == null) ? 0 : Math.max(0, g);
-            return Math.max(0, Math.min(100, (1 - grabbed / denom) * 100));
-          })
-        );
+        this._seriesData = await Promise.all(years.map(async (y) => {
+          const wbHours   = await this._fetchEnergyHours(this._config.entity, y);
+          const gridHours = gridIsPower
+            ? await this._fetchPowerImportHours(this._config.gridEntity, y)
+            : await this._fetchEnergyHours(this._config.gridEntity, y);
+          const free  = new Array(12).fill(0);
+          const total = new Array(12).fill(0);
+          const seen  = new Array(12).fill(false);
+          for (const [key, wb] of wbHours) {
+            if (!(wb > 0)) continue;
+            const g = gridHours.get(key) || 0;
+            const m = new Date(key).getMonth();
+            free[m]  += Math.max(0, wb - g);
+            total[m] += wb;
+            seen[m]   = true;
+          }
+          return total.map((t, m) =>
+            seen[m] && t > 0 ? Math.max(0, Math.min(100, (free[m] / t) * 100)) : null
+          );
+        }));
       } else {
         this._seriesData = results;
       }
