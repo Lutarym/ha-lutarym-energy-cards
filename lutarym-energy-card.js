@@ -1630,10 +1630,9 @@ class LutarymEnergyCard extends HTMLElement {
       totalStr = (heroVal !== null && heroVal !== undefined) ? fmt(heroVal, 0, 1) : '–';
       this._rmHeroLabel = hasTotal ? t(hass, 'rmTotalLabel', { year }) : t(hass, 'rmRoomsSumLabel', { year });
       if (hasTotal && data.grid !== null && data.pvSelf !== null) {
-        splitHtml = `<div class="rm-split">
-          <div class="rm-splitcell"><div class="rm-splitlabel">${t(hass, 'rmGridLabel')}</div><div class="rm-splitval">${fmt(data.grid, 0, 1)} kWh</div></div>
-          <div class="rm-splitcell"><div class="rm-splitlabel">${t(hass, 'rmPvUsedLabel')}</div><div class="rm-splitval" style="color:${accent}">${fmt(data.pvSelf, 0, 1)} kWh</div></div>
-        </div>`;
+        splitHtml = `
+          <div class="rm-headcell"><div class="rm-totlabel">${t(hass, 'rmGridLabel')}</div><div class="rm-headval" style="color:var(--error-color, #c62828)">${fmt(data.grid, 0, 1)}<span class="rm-totunit">kWh</span></div></div>
+          <div class="rm-headcell"><div class="rm-totlabel">${t(hass, 'rmPvUsedLabel')}</div><div class="rm-headval" style="color:var(--success-color, #2e7d32)">${fmt(data.pvSelf, 0, 1)}<span class="rm-totunit">kWh</span></div></div>`;
       }
       const bar = (pct) => `<div class="rm-barwrap"><div class="rm-bar" style="width:${Math.min(100, pct)}%;background:${accent}"></div></div>`;
 
@@ -1687,10 +1686,10 @@ class LutarymEnergyCard extends HTMLElement {
         .rm-totval { font-size:2.2rem; font-weight:600; line-height:1.05; color:var(--primary-text-color); font-variant-numeric:tabular-nums; }
         .rm-totunit { font-size:.8rem; color:var(--secondary-text-color); margin-left:4px; }
         .rm-divider { height:1px; background:var(--divider-color, rgba(128,128,128,.2)); margin:14px 0; }
-        .rm-split { display:flex; gap:10px; margin-top:10px; }
-        .rm-splitcell { flex:1; background:var(--secondary-background-color, rgba(128,128,128,.08)); border-radius:8px; padding:8px 10px; }
-        .rm-splitlabel { font-size:.72rem; color:var(--secondary-text-color); margin-bottom:2px; }
-        .rm-splitval { font-size:1.1rem; font-weight:600; color:var(--primary-text-color); font-variant-numeric:tabular-nums; }
+        .rm-head { display:flex; gap:18px; align-items:flex-end; flex-wrap:wrap; }
+        .rm-headcell { display:flex; flex-direction:column; }
+        .rm-headval { font-size:1.4rem; font-weight:600; color:var(--primary-text-color); font-variant-numeric:tabular-nums; line-height:1.05; }
+        .rm-headval-main { font-size:2.2rem; }
         .rm-row { display:grid; grid-template-columns:1fr 1fr auto auto; align-items:center; gap:8px; padding:5px 0; border-bottom:1px solid var(--divider-color, rgba(128,128,128,.1)); }
         .rm-row:last-child { border-bottom:none; }
         .rm-namecell { display:flex; flex-direction:column; gap:1px; overflow:hidden; }
@@ -1707,9 +1706,11 @@ class LutarymEnergyCard extends HTMLElement {
       </style>
       <ha-card>
         <div class="rm-title">${titleText}</div>
-        <div><div class="rm-totlabel">${this._rmHeroLabel || t(hass, 'rmTotalLabel', { year })}</div>
-          <div><span class="rm-totval">${totalStr}</span><span class="rm-totunit">kWh</span></div></div>
-        ${splitHtml}
+        <div class="rm-head">
+          <div class="rm-headcell"><div class="rm-totlabel">${this._rmHeroLabel || t(hass, 'rmTotalLabel', { year })}</div>
+            <div class="rm-headval rm-headval-main"><span class="rm-totval">${totalStr}</span><span class="rm-totunit">kWh</span></div></div>
+          ${splitHtml}
+        </div>
         <div class="rm-divider"></div>
         ${rowsHtml}
         ${otherHtml}
