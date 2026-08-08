@@ -57,6 +57,20 @@
 const I18N = {
   en: {
     editorCardType: 'Card type',
+    rmDefaultTitle: 'Room Energy Consumption',
+    rmTotalLabel: 'Total consumption {year}',
+    rmOtherLabel: 'Other',
+    rmWsError: 'WebSocket error: {msg}',
+    rmEditorTotalEntity: 'Total energy entity (required)',
+    rmRoomsSectionLabel: 'Rooms ({count}/10)',
+    rmRoomsHint: 'Up to 10 rooms, each with a freely chosen label and its own energy entity.',
+    rmRoomHeaderLabel: 'Room {n}',
+    rmRemoveLabel: 'Remove',
+    rmNameLabel: 'Name',
+    rmNamePlaceholder: 'e.g. Living Room',
+    rmEntityLabel: 'Entity',
+    rmPowerEntityLabel: 'Live power entity (optional)',
+    rmAddRoomLabel: '+ Add room',
     ovDefaultTitle: 'Electricity Overview',
     ovNoStatsYet: 'No statistics data available yet.',
     ovWsError: 'WebSocket error: {msg}',
@@ -152,6 +166,20 @@ const I18N = {
   },
   de: {
     editorCardType: 'Kartentyp',
+    rmDefaultTitle: 'Stromverbrauch Räume',
+    rmTotalLabel: 'Gesamtverbrauch {year}',
+    rmOtherLabel: 'Sonstige',
+    rmWsError: 'WebSocket-Fehler: {msg}',
+    rmEditorTotalEntity: 'Gesamt-Energie-Entity (Pflicht)',
+    rmRoomsSectionLabel: 'Räume ({count}/10)',
+    rmRoomsHint: 'Bis zu 10 Räume, jeweils mit frei wählbarer Beschriftung und zugehöriger Energie-Entity.',
+    rmRoomHeaderLabel: 'Raum {n}',
+    rmRemoveLabel: 'Entfernen',
+    rmNameLabel: 'Name',
+    rmNamePlaceholder: 'z.B. Wohnzimmer',
+    rmEntityLabel: 'Entity',
+    rmPowerEntityLabel: 'Live-Leistung-Entity (optional)',
+    rmAddRoomLabel: '+ Raum hinzufügen',
     ovDefaultTitle: 'Stromübersicht',
     ovNoStatsYet: 'Noch keine Statistikdaten vorhanden.',
     ovWsError: 'WebSocket-Fehler: {msg}',
@@ -263,6 +291,7 @@ const PRESET_I18N = {
     akku:     { label: 'Battery State of Charge', title: 'Battery State of Charge' },
     einspeisung: { label: 'Grid Feed-in', title: 'Grid Feed-in' },
     overview: { label: 'Electricity Overview', title: 'Electricity Overview' },
+    rooms: { label: 'Room Energy', title: 'Room Energy Consumption' },
   },
   de: {
     autarkie: { label: 'Autarkie', title: 'Autarkie' },
@@ -277,6 +306,7 @@ const PRESET_I18N = {
     akku:     { label: 'Akku-Ladezustand', title: 'Akku-Ladezustand' },
     einspeisung: { label: 'Netzeinspeisung', title: 'PV Netz-Einspeisung' },
     overview: { label: 'Stromübersicht', title: 'Stromübersicht' },
+    rooms: { label: 'Raum-Energie', title: 'Stromverbrauch Räume' },
   },
 };
 
@@ -459,6 +489,13 @@ const PRESETS = {
     entity: '',
     color: '#0ea5e9',
   },
+  // Not a bar preset: per-room yearly kWh with % share of the house total,
+  // ported from lutarym-room-energy-card. Own render + editor path.
+  rooms: {
+    mode: 'rooms',
+    entity: '',
+    color: '#03a9f4',
+  },
 };
 
 const CARD_TYPE_KEYS = Object.keys(PRESETS);
@@ -543,6 +580,34 @@ class LutarymEnergyCard extends HTMLElement {
       return;
     }
     this._isOverview = false;
+
+    // Rooms mode: per-room yearly kWh with share of total. Own render/editor.
+    if (preset.mode === 'rooms') {
+      this._isRooms = true;
+      this._preset = preset;
+      const roomsIn = Array.isArray(config.rooms) ? config.rooms.slice(0, 10) : [];
+      const roomsSig = JSON.stringify(roomsIn.map(r => r.entity));
+      const changed = !this._config
+        || this._config.card_type !== cardType
+        || this._config.total_entity !== (config.total_entity || '')
+        || this._roomsSig !== roomsSig;
+      this._roomsSig = roomsSig;
+      this._config = {
+        card_type: cardType,
+        total_entity: config.total_entity || '',
+        entity: config.total_entity || '', // notConfigured check
+        rooms: roomsIn.map(r => ({ name: r.name || '', entity: r.entity || '', power_entity: r.power_entity || '' })),
+        title: config.title ?? presetInfo(this._hass, cardType).title,
+        titleFontSize: Number(config.title_font_size) || 14,
+        appearance: config.appearance ?? 'auto',
+        color: config.color ?? preset.color,
+      };
+      if (changed) { this._roomsData = null; this._lastFetch = 0; }
+      if (this._hass && this._config.total_entity && this._config.rooms.length) this._fetchRooms();
+      this._render();
+      return;
+    }
+    this._isRooms = false;
     const info = presetInfo(this._hass, cardType);
 
     const newEntity = config.entity ?? preset.entity;
@@ -641,6 +706,18 @@ class LutarymEnergyCard extends HTMLElement {
       if (this._config?.energy_entity && Date.now() - this._lastFetch > 15 * 60 * 1000) {
         this._lastFetch = Date.now();
         this._fetchOverview();
+      }
+      return;
+    }
+    if (this._isRooms) {
+      if (this._config?.total_entity && this._config.rooms?.length
+          && Date.now() - this._lastFetch > 15 * 60 * 1000) {
+        this._lastFetch = Date.now();
+        this._fetchRooms();
+      } else if (this._roomsData && Date.now() - (this._roomsLastRender || 0) > 1500) {
+        // refresh live watts without refetching statistics
+        this._roomsLastRender = Date.now();
+        this._render();
       }
       return;
     }
@@ -1068,6 +1145,44 @@ class LutarymEnergyCard extends HTMLElement {
     }
   }
 
+  // ── Rooms mode: yearly kWh per room + total ──
+  async _roomYearKwh(entity) {
+    const now = new Date();
+    const year = now.getFullYear();
+    const result = await this._hass.callWS({
+      type:          'recorder/statistics_during_period',
+      start_time:    new Date(year, 0, 1).toISOString(),
+      end_time:      new Date(year + 1, 0, 1).toISOString(),
+      statistic_ids: [entity],
+      period:        'month',
+      units:         { energy: 'kWh' },
+      types:         ['change'],
+    });
+    const points = result?.[entity] ?? [];
+    if (points.length === 0) return null;
+    const total = points.reduce((acc, p) => acc + (typeof p.change === 'number' && p.change >= 0 ? p.change : 0), 0);
+    return total > 0 ? total : null;
+  }
+
+  async _fetchRooms() {
+    if (!this._hass || !this._config?.total_entity || !this._config.rooms?.length) return;
+    if (this._roomsLoading) return;
+    this._roomsLoading = true;
+    try {
+      const entities = [this._config.total_entity, ...this._config.rooms.map(r => r.entity)];
+      const results  = await Promise.all(entities.map(e => this._roomYearKwh(e)));
+      this._roomsData = {
+        total: results[0],
+        rooms: this._config.rooms.map((r, i) => ({ name: r.name, kwh: results[i + 1] })),
+      };
+    } catch (e) {
+      this._roomsData = { error: t(this._hass, 'rmWsError', { msg: e.message }) };
+    } finally {
+      this._roomsLoading = false;
+      this._render();
+    }
+  }
+
   _yearFraction() {
     const now = new Date();
     const start = new Date(now.getFullYear(), 0, 1);
@@ -1445,6 +1560,103 @@ class LutarymEnergyCard extends HTMLElement {
       <ha-card>
         <div class="ov-title">${titleText}</div>
         ${inner}
+      </ha-card>`;
+  }
+
+  _renderRooms() {
+    this._roomsLastRender = Date.now();
+    const hass = this._hass;
+    const cfg  = this._config;
+    const data = this._roomsData;
+    const year = new Date().getFullYear();
+    const accent = cfg.color || '#03a9f4';
+    const titleText = cfg.title || t(hass, 'rmDefaultTitle');
+    const fmt = (v, a, b) => Number(v).toLocaleString(undefined, { minimumFractionDigits: a, maximumFractionDigits: b ?? a });
+
+    let totalStr = '…';
+    let rowsHtml = '';
+    let otherHtml = '';
+
+    if (!cfg.total_entity || !cfg.rooms?.length) {
+      rowsHtml = `<div class="rm-empty">${t(hass, 'notConfigured')}</div>`;
+    } else if (data && data.error) {
+      totalStr = '!';
+      rowsHtml = `<div class="rm-empty">${data.error}</div>`;
+    } else if (data) {
+      const total = data.total;
+      totalStr = (total !== null) ? fmt(total, 0, 1) : '–';
+      const bar = (pct) => `<div class="rm-barwrap"><div class="rm-bar" style="width:${Math.min(100, pct)}%;background:${accent}"></div></div>`;
+
+      // Pair each room with its config (for power_entity) and sort by yearly
+      // consumption, largest first. Rooms without data (null) go last.
+      const paired = data.rooms.map((room, i) => ({ room, cfgRoom: cfg.rooms[i] || {} }));
+      paired.sort((a, b) => (b.room.kwh ?? -1) - (a.room.kwh ?? -1));
+
+      rowsHtml = paired.map(({ room, cfgRoom }) => {
+        let wattHtml = '';
+        if (cfgRoom.power_entity && hass?.states?.[cfgRoom.power_entity]) {
+          const w = parseFloat(hass.states[cfgRoom.power_entity].state);
+          if (!isNaN(w)) wattHtml = `<span class="rm-watt" style="color:${accent}">${fmt(w, 0, 1)} W</span>`;
+        }
+        let kwhStr = '–', pctStr = '–', pct = 0;
+        if (room.kwh !== null) {
+          kwhStr = fmt(room.kwh, 0, 1) + ' kWh';
+          if (total && total > 0) { pct = (room.kwh / total) * 100; pctStr = fmt(pct, 1) + ' %'; }
+        }
+        return `<div class="rm-row">
+          <div class="rm-namecell"><span class="rm-name">${room.name || ''}</span>${wattHtml}</div>
+          ${bar(pct)}
+          <div class="rm-kwh">${kwhStr}</div>
+          <div class="rm-pct">${pctStr}</div>
+        </div>`;
+      }).join('');
+
+      const roomSum = data.rooms.reduce((a, r) => a + (r.kwh ?? 0), 0);
+      const other = (total !== null) ? Math.max(0, total - roomSum) : null;
+      let oKwh = '–', oPct = '–', oPctV = 0;
+      if (other !== null && total && total > 0) {
+        oPctV = (other / total) * 100; oKwh = fmt(other, 0, 1) + ' kWh'; oPct = fmt(oPctV, 1) + ' %';
+      }
+      otherHtml = `<div class="rm-row rm-other">
+        <div class="rm-namecell"><span class="rm-name">${t(hass, 'rmOtherLabel')}</span></div>
+        <div class="rm-barwrap"><div class="rm-bar rm-otherbar" style="width:${Math.min(100, oPctV)}%"></div></div>
+        <div class="rm-kwh">${oKwh}</div>
+        <div class="rm-pct">${oPct}</div>
+      </div>`;
+    } else {
+      rowsHtml = cfg.rooms.map(r => `<div class="rm-row"><div class="rm-namecell"><span class="rm-name">${r.name || ''}</span></div><div class="rm-barwrap"><div class="rm-bar"></div></div><div class="rm-kwh">…</div><div class="rm-pct"></div></div>`).join('');
+    }
+
+    this.shadowRoot.innerHTML = `
+      <style>
+        :host { display:block; width:100%; height:100%; box-sizing:border-box; ${this._appearanceCSSVars()} }
+        ha-card { width:100%; height:100%; box-sizing:border-box; padding:16px 18px; }
+        .rm-title { font-size:${cfg.titleFontSize}px; font-weight:600; letter-spacing:.03em; text-transform:uppercase; color:var(--secondary-text-color); margin-bottom:14px; }
+        .rm-totlabel { font-size:.78rem; color:var(--secondary-text-color); margin-bottom:2px; }
+        .rm-totval { font-size:2.2rem; font-weight:600; line-height:1.05; color:var(--primary-text-color); font-variant-numeric:tabular-nums; }
+        .rm-totunit { font-size:.8rem; color:var(--secondary-text-color); margin-left:4px; }
+        .rm-divider { height:1px; background:var(--divider-color, rgba(128,128,128,.2)); margin:14px 0; }
+        .rm-row { display:grid; grid-template-columns:1fr 1fr auto auto; align-items:center; gap:8px; padding:5px 0; border-bottom:1px solid var(--divider-color, rgba(128,128,128,.1)); }
+        .rm-row:last-child { border-bottom:none; }
+        .rm-namecell { display:flex; flex-direction:column; gap:1px; overflow:hidden; }
+        .rm-name { font-size:.9rem; color:var(--primary-text-color); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .rm-watt { font-size:.75rem; font-variant-numeric:tabular-nums; white-space:nowrap; }
+        .rm-barwrap { height:6px; background:var(--divider-color, rgba(128,128,128,.2)); border-radius:3px; overflow:hidden; }
+        .rm-bar { height:100%; border-radius:3px; background:${accent}; transition:width .4s ease; width:0%; }
+        .rm-otherbar { background:var(--secondary-text-color); opacity:.5; }
+        .rm-other { border-top:1px solid var(--divider-color, rgba(128,128,128,.2)); margin-top:4px; padding-top:8px; border-bottom:none; }
+        .rm-other .rm-name { font-style:italic; color:var(--secondary-text-color); }
+        .rm-kwh { font-size:.88rem; font-variant-numeric:tabular-nums; color:var(--primary-text-color); white-space:nowrap; text-align:right; min-width:70px; }
+        .rm-pct { font-size:.8rem; color:var(--secondary-text-color); white-space:nowrap; text-align:right; min-width:40px; }
+        .rm-empty { color:var(--secondary-text-color); font-size:.9rem; padding:8px 0; }
+      </style>
+      <ha-card>
+        <div class="rm-title">${titleText}</div>
+        <div><div class="rm-totlabel">${t(hass, 'rmTotalLabel', { year })}</div>
+          <div><span class="rm-totval">${totalStr}</span><span class="rm-totunit">kWh</span></div></div>
+        <div class="rm-divider"></div>
+        ${rowsHtml}
+        ${otherHtml}
       </ha-card>`;
   }
 
@@ -1909,6 +2121,7 @@ class LutarymEnergyCard extends HTMLElement {
   _render() {
     if (!this._config) return;
     if (this._isOverview) return this._renderOverview();
+    if (this._isRooms) return this._renderRooms();
     const hass = this._hass;
 
     const now          = new Date();
@@ -2155,6 +2368,14 @@ class LutarymEnergyCardEditor extends HTMLElement {
     delete preserved.heat_entity;
     delete preserved.heat_entity2;
     delete preserved.color_temp;
+    delete preserved.total_entity;
+    delete preserved.rooms;
+    delete preserved.energy_entity;
+    delete preserved.price_per_kwh;
+    delete preserved.base_fee_yearly;
+    delete preserved.base_fee_monthly;
+    delete preserved.base_fee_mode;
+    delete preserved.previous_year_kwh;
     preserved.card_type = value;
 
     this._config = preserved;
@@ -2169,6 +2390,95 @@ class LutarymEnergyCardEditor extends HTMLElement {
       this._config[field] = value;
     }
     this._fireChanged();
+  }
+
+  // ── Rooms editor helpers ──
+  _rmEnsure() { if (!Array.isArray(this._config.rooms)) this._config.rooms = []; }
+  _rmTotalChange(v) { if (v) this._config.total_entity = v; else delete this._config.total_entity; this._fireChanged(); }
+  _rmRoomChange(i, field, v) { this._rmEnsure(); this._config.rooms[i][field] = v; this._fireChanged(); }
+  _rmAddRoom() { this._rmEnsure(); if (this._config.rooms.length >= 10) return; this._config.rooms.push({ name: '', entity: '' }); this._render(); this._fireChanged(); }
+  _rmRemoveRoom(i) { this._rmEnsure(); this._config.rooms.splice(i, 1); this._render(); this._fireChanged(); }
+
+  _renderRoomsEditor(form, hass) {
+    this._rmEnsure();
+    const cfg = this._config;
+
+    // Total entity
+    form.appendChild(this._row(
+      t(hass, 'rmEditorTotalEntity'), null, { entity: {} },
+      'total_entity', cfg.total_entity,
+    ));
+    // Title
+    form.appendChild(this._row(
+      t(hass, 'editorTitle'), null, { text: {} }, 'title', cfg.title,
+    ));
+
+    // Section label + hint
+    const sec = document.createElement('div');
+    sec.className = 'editor-row';
+    sec.innerHTML = `<label>${t(hass, 'rmRoomsSectionLabel', { count: cfg.rooms.length })}</label><div class="hint">${t(hass, 'rmRoomsHint')}</div>`;
+    form.appendChild(sec);
+
+    cfg.rooms.forEach((room, i) => {
+      const box = document.createElement('div');
+      box.className = 'editor-row';
+      box.style.border = '1px solid var(--divider-color, #e0e0e0)';
+      box.style.borderRadius = '8px';
+      box.style.padding = '10px';
+      box.style.gap = '8px';
+
+      const header = document.createElement('div');
+      header.style.display = 'flex';
+      header.style.justifyContent = 'space-between';
+      header.style.alignItems = 'center';
+      const hl = document.createElement('span');
+      hl.textContent = t(hass, 'rmRoomHeaderLabel', { n: i + 1 });
+      hl.style.fontSize = '12px';
+      hl.style.color = 'var(--secondary-text-color)';
+      hl.style.fontWeight = '600';
+      const rm = document.createElement('button');
+      rm.type = 'button';
+      rm.textContent = t(hass, 'rmRemoveLabel');
+      rm.style.cssText = 'font-size:11px;color:var(--error-color,#c62828);background:none;border:none;cursor:pointer;padding:2px 6px;';
+      rm.addEventListener('click', () => this._rmRemoveRoom(i));
+      header.appendChild(hl); header.appendChild(rm);
+      box.appendChild(header);
+
+      // name (text input)
+      const nameWrap = document.createElement('div'); nameWrap.className = 'editor-row';
+      const nameLbl = document.createElement('label'); nameLbl.textContent = t(hass, 'rmNameLabel'); nameWrap.appendChild(nameLbl);
+      const nameInp = document.createElement('input');
+      nameInp.type = 'text'; nameInp.className = 'number-input'; nameInp.style.width = '100%';
+      nameInp.value = room.name ?? ''; nameInp.placeholder = t(hass, 'rmNamePlaceholder');
+      nameInp.addEventListener('change', ev => this._rmRoomChange(i, 'name', ev.target.value));
+      nameWrap.appendChild(nameInp); box.appendChild(nameWrap);
+
+      // entity
+      const entWrap = document.createElement('div'); entWrap.className = 'editor-row';
+      const entLbl = document.createElement('label'); entLbl.textContent = t(hass, 'rmEntityLabel'); entWrap.appendChild(entLbl);
+      const entSel = document.createElement('ha-selector');
+      entSel.hass = this._hass; entSel.selector = { entity: {} }; entSel.value = room.entity ?? '';
+      entSel.addEventListener('value-changed', ev => { ev.stopPropagation(); this._rmRoomChange(i, 'entity', ev.detail.value); });
+      entWrap.appendChild(entSel); box.appendChild(entWrap);
+
+      // power (optional)
+      const pWrap = document.createElement('div'); pWrap.className = 'editor-row';
+      const pLbl = document.createElement('label'); pLbl.textContent = t(hass, 'rmPowerEntityLabel'); pWrap.appendChild(pLbl);
+      const pSel = document.createElement('ha-selector');
+      pSel.hass = this._hass; pSel.selector = { entity: {} }; pSel.value = room.power_entity ?? '';
+      pSel.addEventListener('value-changed', ev => { ev.stopPropagation(); this._rmRoomChange(i, 'power_entity', ev.detail.value); });
+      pWrap.appendChild(pSel); box.appendChild(pWrap);
+
+      form.appendChild(box);
+    });
+
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.textContent = t(hass, 'rmAddRoomLabel');
+    add.disabled = cfg.rooms.length >= 10;
+    add.style.cssText = 'padding:8px 12px;border:1px dashed var(--divider-color,#ccc);border-radius:6px;background:none;color:var(--primary-color,#03a9f4);font-size:13px;cursor:pointer;';
+    add.addEventListener('click', () => this._rmAddRoom());
+    form.appendChild(add);
   }
 
   _row(labelText, hintText, selectorObj, field, value) {
@@ -2521,6 +2831,11 @@ class LutarymEnergyCardEditor extends HTMLElement {
         t(hass, 'editorPreviousYear'), t(hass, 'editorPreviousYearHint'),
         'previous_year_kwh', this._config.previous_year_kwh, 0, null, false, t(hass, 'autoLabel'), 1, '',
       ));
+      return;
+    }
+
+    if (preset.mode === 'rooms') {
+      this._renderRoomsEditor(form, hass);
       return;
     }
 
