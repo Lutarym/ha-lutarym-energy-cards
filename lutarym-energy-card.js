@@ -63,7 +63,10 @@ const I18N = {
     rmOtherLabel: 'Other',
     rmWsError: 'WebSocket error: {msg}',
     rmEditorTotalEntity: 'Total energy entity (optional)',
-    rmEditorTotalHint: 'Leave empty to compare rooms only (share of rooms sum, no "Other"). Set a whole-house meter to show "Other" = total − rooms.',
+    rmEditorTotalHint: 'Grid import meter (e.g. OBIS 1.8.0). Leave empty for rooms-only (share of rooms sum, no "Other").',
+    rmEditorPvEntity: 'PV yield entity (optional, kWh)',
+    rmEditorFeedinEntity: 'Grid feed-in entity (optional, kWh)',
+    rmEditorPvHint: 'With both set, real consumption = grid import + (PV yield − feed-in), so "Other" and shares reflect true usage incl. PV.',
     rmRoomsSectionLabel: 'Rooms ({count}/10)',
     rmRoomsHint: 'Up to 10 rooms, each with a freely chosen label and its own energy entity.',
     rmRoomHeaderLabel: 'Room {n}',
@@ -174,7 +177,10 @@ const I18N = {
     rmOtherLabel: 'Sonstige',
     rmWsError: 'WebSocket-Fehler: {msg}',
     rmEditorTotalEntity: 'Gesamt-Energie-Entity (optional)',
-    rmEditorTotalHint: 'Leer lassen = nur Räume vergleichen (Anteil an Raum-Summe, kein "Sonstiges"). Gesamtzähler setzen = "Sonstiges" = Gesamt − Räume.',
+    rmEditorTotalHint: 'Netzbezugs-Zähler (z. B. OBIS 1.8.0). Leer lassen = nur Räume (Anteil an Raum-Summe, kein "Sonstiges").',
+    rmEditorPvEntity: 'PV-Ertrag-Entity (optional, kWh)',
+    rmEditorFeedinEntity: 'Netz-Einspeisung-Entity (optional, kWh)',
+    rmEditorPvHint: 'Beide gesetzt: echter Verbrauch = Netzbezug + (PV-Ertrag − Einspeisung). "Sonstiges" und Anteile berücksichtigen dann auch den PV-Eigenverbrauch.',
     rmRoomsSectionLabel: 'Räume ({count}/10)',
     rmRoomsHint: 'Bis zu 10 Räume, jeweils mit frei wählbarer Beschriftung und zugehöriger Energie-Entity.',
     rmRoomHeaderLabel: 'Raum {n}',
@@ -591,14 +597,20 @@ class LutarymEnergyCard extends HTMLElement {
       this._preset = preset;
       const roomsIn = Array.isArray(config.rooms) ? config.rooms.slice(0, 10) : [];
       const roomsSig = JSON.stringify(roomsIn.map(r => r.entity));
+      const pvEntity = config.pv_entity || '';
+      const feedinEntity = config.feedin_entity || '';
       const changed = !this._config
         || this._config.card_type !== cardType
         || this._config.total_entity !== (config.total_entity || '')
+        || this._config.pvEntity !== pvEntity
+        || this._config.feedinEntity !== feedinEntity
         || this._roomsSig !== roomsSig;
       this._roomsSig = roomsSig;
       this._config = {
         card_type: cardType,
         total_entity: config.total_entity || '',
+        pvEntity,
+        feedinEntity,
         entity: config.total_entity || (roomsIn.length ? '__rooms__' : ''), // notConfigured check
         rooms: roomsIn.map(r => ({ name: r.name || '', entity: r.entity || '', power_entity: r.power_entity || '' })),
         title: config.title ?? presetInfo(this._hass, cardType).title,
@@ -1175,8 +1187,18 @@ class LutarymEnergyCard extends HTMLElement {
     this._roomsLoading = true;
     try {
       const roomList = this._config.rooms || [];
-      const totalKwh = this._config.total_entity ? await this._roomYearKwh(this._config.total_entity) : null;
-      const roomKwh  = await Promise.all(roomList.map(r => this._roomYearKwh(r.entity)));
+      const wantPv = !!(this._config.total_entity && this._config.pvEntity && this._config.feedinEntity);
+      const [grid, pv, feed] = await Promise.all([
+        this._config.total_entity ? this._roomYearKwh(this._config.total_entity) : Promise.resolve(null),
+        wantPv ? this._roomYearKwh(this._config.pvEntity) : Promise.resolve(null),
+        wantPv ? this._roomYearKwh(this._config.feedinEntity) : Promise.resolve(null),
+      ]);
+      const roomKwh = await Promise.all(roomList.map(r => this._roomYearKwh(r.entity)));
+      // True house consumption = grid import + PV self-consumed (PV − feed-in).
+      let totalKwh = grid;
+      if (wantPv && grid !== null && pv !== null && feed !== null) {
+        totalKwh = Math.max(0, grid + pv - feed);
+      }
       this._roomsData = {
         total: totalKwh,
         hasTotal: !!this._config.total_entity,
@@ -2384,6 +2406,8 @@ class LutarymEnergyCardEditor extends HTMLElement {
     delete preserved.heat_entity2;
     delete preserved.color_temp;
     delete preserved.total_entity;
+    delete preserved.pv_entity;
+    delete preserved.feedin_entity;
     delete preserved.rooms;
     delete preserved.energy_entity;
     delete preserved.price_per_kwh;
@@ -2426,6 +2450,14 @@ class LutarymEnergyCardEditor extends HTMLElement {
     form.appendChild(this._row(
       t(hass, 'rmEditorTotalEntity'), t(hass, 'rmEditorTotalHint'), { entity: {} },
       'total_entity', cfg.total_entity,
+    ));
+    form.appendChild(this._row(
+      t(hass, 'rmEditorPvEntity'), t(hass, 'rmEditorPvHint'), { entity: {} },
+      'pv_entity', cfg.pvEntity,
+    ));
+    form.appendChild(this._row(
+      t(hass, 'rmEditorFeedinEntity'), null, { entity: {} },
+      'feedin_entity', cfg.feedinEntity,
     ));
     // Title
     form.appendChild(this._row(
