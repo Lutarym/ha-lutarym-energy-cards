@@ -299,7 +299,7 @@ const PRESETS = {
   // No grid draw ⇒ 100 %. All conversion happens in the card; no template.
   wallbox_eff: {
     entity:     'sensor.wallbox_strom_energie',
-    color:      '#22c55e',
+    color:      '#06b6d4',
     colorPrev:  '#888888',
     unit:       '%',
     statType:   'change',
