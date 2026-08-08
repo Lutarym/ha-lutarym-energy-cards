@@ -71,7 +71,6 @@ const I18N = {
     ovLess: 'less',
     ovMore: 'more',
     ovNoDataForYear: 'No data for {year}',
-    ovForecastLabel: 'Year-end forecast (linear)',
     editorEnergyEntity: 'Energy entity (required)',
     editorPrice: 'Price per kWh in EUR (required)',
     editorPriceHint: 'e.g. 0.32 for 32 ct/kWh (EUR per kWh).',
@@ -83,7 +82,6 @@ const I18N = {
     editorCurrency: 'Currency',
     editorPreviousYear: 'Manual previous-year value (kWh)',
     editorPreviousYearHint: 'Auto-calculated from statistics (previous Jan 1–Dec 31). Leave empty for automatic; only override if historical data is missing.',
-    editorShowForecast: 'Show year-end forecast',
     editorEntity: 'Entity',
     editorEntityHint: 'Optional — default for "{preset}": {entity}',
     editorEntityRequiredHint: 'Required — no default entity, please select one for your setup',
@@ -168,7 +166,6 @@ const I18N = {
     ovLess: 'weniger',
     ovMore: 'mehr',
     ovNoDataForYear: 'Keine Daten für {year}',
-    ovForecastLabel: 'Prognose Jahresende (linear)',
     editorEnergyEntity: 'Energie-Entity (Pflicht)',
     editorPrice: 'Preis pro kWh in EUR (Pflicht)',
     editorPriceHint: 'z. B. 0.32 für 32 ct/kWh (Euro pro kWh).',
@@ -180,7 +177,6 @@ const I18N = {
     editorCurrency: 'Währung',
     editorPreviousYear: 'Manueller Vorjahreswert (kWh)',
     editorPreviousYearHint: 'Wird automatisch aus der Statistik berechnet (1.1.–31.12. Vorjahr). Leer lassen für automatisch; nur bei fehlenden historischen Daten überschreiben.',
-    editorShowForecast: 'Hochrechnung Jahresende anzeigen',
     editorEntity: 'Entity',
     editorEntityHint: 'Optional — Standard für "{preset}": {entity}',
     editorEntityRequiredHint: 'Erforderlich — keine Standard-Entity, bitte eine für deine Anlage auswählen',
@@ -536,7 +532,6 @@ class LutarymEnergyCard extends HTMLElement {
         base_fee_monthly: config.base_fee_monthly,
         base_fee_mode: config.base_fee_mode || 'accrued',
         currency: config.currency || 'EUR',
-        show_forecast: config.show_forecast === true,
         previous_year_kwh: config.previous_year_kwh,
         title: config.title ?? presetInfo(this._hass, cardType).title,
         titleFontSize: Number(config.title_font_size) || 14,
@@ -1411,10 +1406,6 @@ class LutarymEnergyCard extends HTMLElement {
       const prevText = (previous !== null && previous > 0) ? `${this._ovFmt(previous,0,1)} kWh` : '–';
 
       const noteHtml = data.partialYear ? `<div class="ov-note">${t(hass,'ovPartialYearNote')}</div>` : '';
-      const forecastHtml = (cfg.show_forecast && fraction > 0)
-        ? `<div class="ov-forecast"><span>${t(hass,'ovForecastLabel')}</span><span>${this._ovFmt(current/fraction,0,1)} kWh</span></div>`
-        : '';
-
       inner = `
         <div class="ov-hero">${this._ovFmt(totalCost,2)} ${currency}</div>
         <div class="ov-sub">${t(hass,'ovCostLabel',{ year })}</div>
@@ -1426,7 +1417,6 @@ class LutarymEnergyCard extends HTMLElement {
         </div>
         ${compareHtml}
         ${noteHtml}
-        ${forecastHtml}
       `;
     }
 
@@ -1451,9 +1441,6 @@ class LutarymEnergyCard extends HTMLElement {
         .ov-compare.down { color:var(--success-color, #2e7d32); }
         .ov-compare.up { color:var(--error-color, #c62828); }
         .ov-note { font-size:.75rem; color:var(--secondary-text-color); margin-top:6px; font-style:italic; }
-        .ov-forecast { display:flex; justify-content:space-between; gap:12px; margin-top:12px; padding-top:12px; border-top:1px solid var(--divider-color, rgba(128,128,128,.2)); font-size:.85rem; }
-        .ov-forecast span:first-child { color:var(--secondary-text-color); }
-        .ov-forecast span:last-child { color:var(--primary-text-color); font-variant-numeric:tabular-nums; }
       </style>
       <ha-card>
         <div class="ov-title">${titleText}</div>
@@ -2533,10 +2520,6 @@ class LutarymEnergyCardEditor extends HTMLElement {
       form.appendChild(this._numberRow(
         t(hass, 'editorPreviousYear'), t(hass, 'editorPreviousYearHint'),
         'previous_year_kwh', this._config.previous_year_kwh, 0, null, false, t(hass, 'autoLabel'), 1, '',
-      ));
-      form.appendChild(this._toggleRow(
-        t(hass, 'editorShowForecast'), null,
-        'show_forecast', this._config.show_forecast === true,
       ));
       return;
     }
