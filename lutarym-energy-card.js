@@ -99,6 +99,10 @@ const I18N = {
     editorDistanceEntityHint: 'Optional — odometer/trip sensor, shows a line for km driven per month',
     editorGridEntity: 'Grid entity (power W/kW or energy kWh)',
     editorGridEntityHint: 'Required — grid draw. Power is integrated to monthly import kWh. Efficiency = (1 − grid ÷ charging) × 100',
+    editorFeedinEntity: 'Grid feed-in entity (kWh)',
+    editorFeedinEntityHint: 'Required — PV energy exported to grid. Self-consumption = (PV − feed-in) ÷ PV × 100',
+    editorHeatEntity: 'Heat produced entity (kWh)',
+    editorHeatEntityHint: 'Required — thermal energy produced. COP = heat ÷ electricity',
     sectionColors: 'Colors',
     colorCurrentYear: 'Current year',
     colorCurrentYearHint: 'Default for "{preset}": {color}',
@@ -165,6 +169,10 @@ const I18N = {
     editorDistanceEntityHint: 'Optional — Kilometerstand-/Fahrten-Sensor, zeigt eine Linie für gefahrene km pro Monat',
     editorGridEntity: 'Netz-Entity (Leistung W/kW oder Energie kWh)',
     editorGridEntityHint: 'Erforderlich — Netzbezug. Leistung wird zu Monats-kWh integriert. Effizienz = (1 − Netz ÷ Ladung) × 100',
+    editorFeedinEntity: 'Netz-Einspeisung-Entity (kWh)',
+    editorFeedinEntityHint: 'Erforderlich — ins Netz eingespeiste PV-Energie. Eigenverbrauch = (PV − Einspeisung) ÷ PV × 100',
+    editorHeatEntity: 'Wärmemengen-Entity (kWh)',
+    editorHeatEntityHint: 'Erforderlich — erzeugte thermische Energie. COP = Wärme ÷ Strom',
     sectionColors: 'Farben',
     colorCurrentYear: 'Aktuelles Jahr',
     colorCurrentYearHint: 'Standard für "{preset}": {color}',
@@ -198,6 +206,8 @@ const PRESET_I18N = {
     pv:       { label: 'PV Yield', title: 'PV Yield' },
     wallbox:  { label: 'Wallbox', title: 'Wallbox' },
     wallbox_eff: { label: 'Wallbox Charging Efficiency', title: 'Wallbox Charging Efficiency' },
+    eigenverbrauch: { label: 'Self-Consumption', title: 'Self-Consumption' },
+    cop: { label: 'Heat Pump COP', title: 'Heat Pump COP' },
     wp:       { label: 'Heat Pump', title: 'Heat Pump' },
     klima:    { label: 'Air Conditioning', title: 'Air Conditioning' },
     akku:     { label: 'Battery State of Charge', title: 'Battery State of Charge' },
@@ -209,6 +219,8 @@ const PRESET_I18N = {
     pv:       { label: 'PV Ertrag', title: 'PV Ertrag' },
     wallbox:  { label: 'Wallbox', title: 'Wallbox' },
     wallbox_eff: { label: 'Wallbox Ladeeffizienz', title: 'Wallbox Ladeeffizienz' },
+    eigenverbrauch: { label: 'Eigenverbrauchsquote', title: 'Eigenverbrauchsquote' },
+    cop: { label: 'Wärmepumpe COP', title: 'Wärmepumpe COP' },
     wp:       { label: 'Wärmepumpe', title: 'Wärmepumpe' },
     klima:    { label: 'Klimaanlage', title: 'Klimaanlage' },
     akku:     { label: 'Akku-Ladezustand', title: 'Akku-Ladezustand' },
@@ -298,7 +310,7 @@ const PRESETS = {
   // Monthly value = (1 − grid_import_kWh / total_kWh) * 100, clamped 0-100.
   // No grid draw ⇒ 100 %. All conversion happens in the card; no template.
   wallbox_eff: {
-    entity:     'sensor.wallbox_strom_energie',
+    entity:     '',
     color:      '#06b6d4',
     colorPrev:  '#888888',
     unit:       '%',
@@ -307,6 +319,42 @@ const PRESETS = {
     aggregate:  'avg',            // summary = average of the monthly shares (like autarkie)
     valueSuffix: '%',
     isRatio:    true,             // value = (1 − grid_import / entity) * 100 per month
+    ratioMode:  'marginal_hourly',
+    secondKey:  'grid_entity',
+  },
+  // Self-consumption rate: how much of the PV generation was used at home
+  // instead of exported. entity = PV yield (kWh), feedin_entity = grid feed-in
+  // (kWh). Monthly = (PV − feedin) / PV · 100. Both are directly metered, so a
+  // plain monthly ratio is exact — no per-hour split needed.
+  eigenverbrauch: {
+    entity:     '',
+    color:      '#f59e0b',
+    colorPrev:  '#888888',
+    unit:       '%',
+    statType:   'change',
+    fixedMax:   100,
+    aggregate:  'avg',
+    valueSuffix: '%',
+    isRatio:    true,
+    ratioMode:  'complement_monthly',
+    secondKey:  'feedin_entity',
+  },
+  // Heat pump COP: heat produced per unit of electricity. entity = electrical
+  // energy consumed (kWh), heat_entity = thermal energy produced (kWh, e.g.
+  // from Heishamon). Monthly = heat / electricity (a number ~2–5, NOT a %).
+  // Auto-scaled axis; needs a real thermal-energy sensor to be meaningful.
+  cop: {
+    entity:     '',
+    color:      '#a855f7',
+    colorPrev:  '#888888',
+    unit:       '',
+    statType:   'change',
+    aggregate:  'avg',
+    valueSuffix: '',
+    decimals:   2,
+    isRatio:    true,
+    ratioMode:  'quotient_monthly',
+    secondKey:  'heat_entity',
   },
   wp: {
     entity:     'sensor.waermepumpe',
@@ -425,7 +473,8 @@ class LutarymEnergyCard extends HTMLElement {
     // for supportsDistanceLine presets.
     const newDistanceEntity = (preset.supportsDistanceLine && config.distance_entity) ? config.distance_entity : '';
     // Numerator entity for ratio presets (wallbox_eff): kWh charged grid-free.
-    const newGridfreeEntity = (preset.isRatio && config.grid_entity) ? config.grid_entity : '';
+    const newGridfreeEntity = (preset.isRatio && preset.secondKey && config[preset.secondKey])
+      ? config[preset.secondKey] : '';
     const entityOrTypeChanged =
       !this._config ||
       this._config.card_type !== cardType ||
@@ -435,6 +484,7 @@ class LutarymEnergyCard extends HTMLElement {
       this._config.tempMode !== newTempMode ||
       this._config.distanceEntity !== newDistanceEntity ||
       this._config.gridEntity !== newGridfreeEntity ||
+      this._config.heatEntity2 !== (config.heat_entity2 || '') ||
       this._config.yearsBack !== newYearsBack ||
       this._config.statMode !== newStatMode;
 
@@ -447,6 +497,7 @@ class LutarymEnergyCard extends HTMLElement {
       distanceEntity: newDistanceEntity, // optional second entity (km driven) for the distance line
       gridEntity: newGridfreeEntity, // grid entity (energy kWh or power W) for wallbox_eff
       gridImportNegative: config.grid_import_negative === true, // some meters sign import negative
+      heatEntity2: config.heat_entity2 || '', // optional 2nd thermal source for COP (heating + DHW)
       title:      config.title      ?? info.title,
       color:      config.color      ?? preset.color,
       colorPrev:  config.color_prev ?? preset.colorPrev,
@@ -709,6 +760,39 @@ class LutarymEnergyCard extends HTMLElement {
     }
     return map;
   }
+
+  // Monthly ENERGY (kWh) for an entity that may be POWER (W/kW) or ENERGY
+  // (kWh). Power → integrate hourly means (mean · 1h), summed per month.
+  // Energy → monthly change. Used by the COP preset, where both the produced
+  // and consumed sides are Heishamon power sensors.
+  async _fetchMonthlyEnergy(entity, year) {
+    if (this._entityIsPower(entity)) {
+      const res = await this._hass.callWS({
+        type:          'recorder/statistics_during_period',
+        start_time:    new Date(year, 0, 1).toISOString(),
+        end_time:      new Date(year + 1, 0, 1).toISOString(),
+        statistic_ids: [entity],
+        period:        'hour',
+        types:         ['mean'],
+      });
+      const rows = res?.[entity] ?? [];
+      const unit = String(
+        this._hass?.states?.[entity]?.attributes?.unit_of_measurement || 'W'
+      ).trim().toLowerCase();
+      const toKW = unit === 'kw' ? 1 : 1 / 1000;
+      const months = new Array(12).fill(null);
+      for (const r of rows) {
+        const mean = Number(r.mean);
+        if (!Number.isFinite(mean)) continue;
+        const d = new Date(r.start);
+        if (d.getFullYear() !== year) continue;
+        months[d.getMonth()] = (months[d.getMonth()] ?? 0) + Math.max(0, mean) * toKW;
+      }
+      return months;
+    }
+    // Energy sensor: monthly change (kWh).
+    return this._fetchYear(year, entity);
+  }
   // this is a different measurement than the energy entity above (power vs.
   // cumulative energy), so it needs its own recorder query. Only called when
   // a power entity is actually configured.
@@ -848,7 +932,7 @@ class LutarymEnergyCard extends HTMLElement {
       // charging ⇒ that hour counts as fully grid. If the grid entity is a
       // POWER sensor instead of energy, its hourly mean is converted to import
       // energy first. All in the card — no template, no extra sensor.
-      if (this._preset.isRatio && this._config.gridEntity) {
+      if (this._preset.isRatio && this._config.gridEntity && this._preset.ratioMode === 'marginal_hourly') {
         const gridIsPower = this._entityIsPower(this._config.gridEntity);
         this._seriesData = await Promise.all(years.map(async (y) => {
           const wbHours   = await this._fetchEnergyHours(this._config.entity, y);
@@ -870,6 +954,43 @@ class LutarymEnergyCard extends HTMLElement {
             seen[m] && t > 0 ? Math.max(0, Math.min(100, (free[m] / t) * 100)) : null
           );
         }));
+      } else if (this._preset.isRatio && this._config.gridEntity && this._preset.ratioMode === 'quotient_monthly') {
+        // COP/JAZ: thermal produced / electricity consumed per month.
+        // Numerator can be one OR two thermal sources (e.g. heating + DHW) so
+        // its scope matches a whole-WP electricity meter (Shelly). Power (W)
+        // sources are integrated to kWh from hourly means; energy (kWh) sources
+        // use monthly change. Denominator likewise (Shelly kWh → monthly change).
+        const heatEntities = [this._config.gridEntity];
+        if (this._config.heatEntity2) heatEntities.push(this._config.heatEntity2);
+        const [elec, heatParts] = await Promise.all([
+          Promise.all(years.map(y => this._fetchMonthlyEnergy(this._config.entity, y))),
+          Promise.all(years.map(y =>
+            Promise.all(heatEntities.map(e => this._fetchMonthlyEnergy(e, y)))
+          )),
+        ]);
+        this._seriesData = years.map((_, yi) =>
+          new Array(12).fill(null).map((_, m) => {
+            const e = elec[yi]?.[m];
+            let h = null;
+            for (const part of heatParts[yi]) {
+              const v = part?.[m];
+              if (v != null) h = (h ?? 0) + v;
+            }
+            if (e == null || e <= 0 || h == null || h <= 0) return null;
+            return h / e;
+          })
+        );
+      } else if (this._preset.isRatio && this._config.gridEntity) {
+        // complement_monthly (self-consumption): (entity − other) / entity · 100,
+        // both directly-metered energy sensors, monthly.
+        const other = await Promise.all(years.map(y => this._fetchYear(y, this._config.gridEntity)));
+        this._seriesData = results.map((denYear, yi) =>
+          denYear.map((den, m) => {
+            const o = other[yi]?.[m];
+            if (den == null || den <= 0 || o == null) return null;
+            return Math.max(0, Math.min(100, ((den - o) / den) * 100));
+          })
+        );
       } else {
         this._seriesData = results;
       }
@@ -1262,7 +1383,7 @@ class LutarymEnergyCard extends HTMLElement {
           // tooltip on the bar itself does too.
         } else if (this._config.showValues && isCurrentSeries && fVal > 0 && primaryVal > 0) {
           // Value label only for the current year (otherwise too cluttered with multiple years)
-          valLabels += `<text x="${(xBar + barW / 2).toFixed(1)}" y="${(bY - 3).toFixed(1)}" text-anchor="middle" font-size="${fVal}" fill="${colorText}">${primaryVal.toFixed(0)}${this._preset.valueSuffix}</text>`;
+          valLabels += `<text x="${(xBar + barW / 2).toFixed(1)}" y="${(bY - 3).toFixed(1)}" text-anchor="middle" font-size="${fVal}" fill="${colorText}">${primaryVal.toFixed(this._preset.decimals ?? 0)}${this._preset.valueSuffix}</text>`;
         }
 
         // Monthly peak power — a short tick per bar (not a line across the
@@ -1485,9 +1606,9 @@ class LutarymEnergyCard extends HTMLElement {
       return `Ø ${meanStr}${suffix}`;
     }
     if (this._preset.aggregate === 'avg') {
-      return `Ø ${val.toFixed(1)} ${unit}`;
+      return `Ø ${val.toFixed(this._preset.decimals ?? 1)} ${unit}`;
     }
-    return `${val.toFixed(0)} ${unit}`;
+    return `${val.toFixed(this._preset.decimals ?? 0)} ${unit}`;
   }
 
   // Single-value formatter shared by the hover tooltip — same style as the
@@ -1496,7 +1617,8 @@ class LutarymEnergyCard extends HTMLElement {
   _formatValue(v) {
     if (v == null) return '–';
     const suffix = this._preset.valueSuffix;
-    return suffix ? `${v.toFixed(0)}${suffix}` : `${v.toFixed(0)} ${this._preset.unit}`;
+    const d = this._preset.decimals ?? 0;
+    return suffix ? `${v.toFixed(d)}${suffix}` : `${v.toFixed(d)} ${this._preset.unit}`;
   }
 
   // Hover-tooltip text for one bar: month + year + value, or month + year +
@@ -1764,6 +1886,9 @@ class LutarymEnergyCardEditor extends HTMLElement {
     delete preserved.distance_entity;
     delete preserved.color_distance;
     delete preserved.grid_entity;
+    delete preserved.feedin_entity;
+    delete preserved.heat_entity;
+    delete preserved.heat_entity2;
     delete preserved.color_temp;
     preserved.card_type = value;
 
@@ -2193,13 +2318,16 @@ class LutarymEnergyCardEditor extends HTMLElement {
       ));
     }
 
-    if (preset.isRatio) {
+    if (preset.isRatio && preset.secondKey) {
+      const lblKey = preset.secondKey === 'feedin_entity' ? 'editorFeedinEntity'
+                   : preset.secondKey === 'heat_entity'   ? 'editorHeatEntity'
+                   : 'editorGridEntity';
       form.appendChild(this._row(
-        t(hass, 'editorGridEntity'),
-        t(hass, 'editorGridEntityHint'),
+        t(hass, lblKey),
+        t(hass, lblKey + 'Hint'),
         { entity: {} },
-        'grid_entity',
-        this._config.grid_entity,
+        preset.secondKey,
+        this._config[preset.secondKey],
       ));
     }
 
