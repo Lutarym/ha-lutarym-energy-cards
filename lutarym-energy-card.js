@@ -57,6 +57,33 @@
 const I18N = {
   en: {
     editorCardType: 'Card type',
+    ovDefaultTitle: 'Electricity Overview',
+    ovNoStatsYet: 'No statistics data available yet.',
+    ovWsError: 'WebSocket error: {msg}',
+    ovLoadingData: 'Loading data',
+    ovCostLabel: 'Electricity cost {year} so far',
+    ovEnergyLabel: 'Energy ({kwh} kWh × {price} {currency})',
+    ovBaseFeeYear: 'Base fee (year)',
+    ovBaseFeeAccrued: 'Base fee (prorated)',
+    ovConsumptionLabel: 'Consumption {year}',
+    ovPartialYearNote: 'Sensor not present since Jan 1st, consumption since installation.',
+    ovPreviousYearLabel: 'Previous year {year}',
+    ovLess: 'less',
+    ovMore: 'more',
+    ovNoDataForYear: 'No data for {year}',
+    ovForecastLabel: 'Year-end forecast (linear)',
+    editorEnergyEntity: 'Energy entity (required)',
+    editorPrice: 'Price per kWh in EUR (required)',
+    editorPriceHint: 'e.g. 0.32 for 32 ct/kWh (EUR per kWh).',
+    editorBaseFeeYearly: 'Yearly base fee',
+    editorBaseFeeMonthly: 'Monthly base fee (alternative)',
+    editorBaseFeeMode: 'Base fee mode',
+    ovModeAccrued: 'Prorated by day',
+    ovModeFull: 'Full yearly fee',
+    editorCurrency: 'Currency',
+    editorPreviousYear: 'Manual previous-year value (kWh)',
+    editorPreviousYearHint: 'Auto-calculated from statistics (previous Jan 1–Dec 31). Leave empty for automatic; only override if historical data is missing.',
+    editorShowForecast: 'Show year-end forecast',
     editorEntity: 'Entity',
     editorEntityHint: 'Optional — default for "{preset}": {entity}',
     editorEntityRequiredHint: 'Required — no default entity, please select one for your setup',
@@ -127,6 +154,33 @@ const I18N = {
   },
   de: {
     editorCardType: 'Kartentyp',
+    ovDefaultTitle: 'Stromübersicht',
+    ovNoStatsYet: 'Noch keine Statistikdaten vorhanden.',
+    ovWsError: 'WebSocket-Fehler: {msg}',
+    ovLoadingData: 'Lade Daten',
+    ovCostLabel: 'Stromkosten {year} bisher',
+    ovEnergyLabel: 'Energie ({kwh} kWh × {price} {currency})',
+    ovBaseFeeYear: 'Grundgebühr (Jahr)',
+    ovBaseFeeAccrued: 'Grundgebühr (anteilig)',
+    ovConsumptionLabel: 'Verbrauch {year}',
+    ovPartialYearNote: 'Sensor nicht seit 1.1. vorhanden, Verbrauch ab Einbau.',
+    ovPreviousYearLabel: 'Vorjahr {year}',
+    ovLess: 'weniger',
+    ovMore: 'mehr',
+    ovNoDataForYear: 'Keine Daten für {year}',
+    ovForecastLabel: 'Prognose Jahresende (linear)',
+    editorEnergyEntity: 'Energie-Entity (Pflicht)',
+    editorPrice: 'Preis pro kWh in EUR (Pflicht)',
+    editorPriceHint: 'z. B. 0.32 für 32 ct/kWh (Euro pro kWh).',
+    editorBaseFeeYearly: 'Grundgebühr jährlich',
+    editorBaseFeeMonthly: 'Grundgebühr monatlich (Alternative)',
+    editorBaseFeeMode: 'Grundgebühr-Modus',
+    ovModeAccrued: 'Tagesanteilig',
+    ovModeFull: 'Volle Jahresgebühr',
+    editorCurrency: 'Währung',
+    editorPreviousYear: 'Manueller Vorjahreswert (kWh)',
+    editorPreviousYearHint: 'Wird automatisch aus der Statistik berechnet (1.1.–31.12. Vorjahr). Leer lassen für automatisch; nur bei fehlenden historischen Daten überschreiben.',
+    editorShowForecast: 'Hochrechnung Jahresende anzeigen',
     editorEntity: 'Entity',
     editorEntityHint: 'Optional — Standard für "{preset}": {entity}',
     editorEntityRequiredHint: 'Erforderlich — keine Standard-Entity, bitte eine für deine Anlage auswählen',
@@ -212,6 +266,7 @@ const PRESET_I18N = {
     klima:    { label: 'Air Conditioning', title: 'Air Conditioning' },
     akku:     { label: 'Battery State of Charge', title: 'Battery State of Charge' },
     einspeisung: { label: 'Grid Feed-in', title: 'Grid Feed-in' },
+    overview: { label: 'Electricity Overview', title: 'Electricity Overview' },
   },
   de: {
     autarkie: { label: 'Autarkie', title: 'Autarkie' },
@@ -225,6 +280,7 @@ const PRESET_I18N = {
     klima:    { label: 'Klimaanlage', title: 'Klimaanlage' },
     akku:     { label: 'Akku-Ladezustand', title: 'Akku-Ladezustand' },
     einspeisung: { label: 'Netzeinspeisung', title: 'PV Netz-Einspeisung' },
+    overview: { label: 'Stromübersicht', title: 'Stromübersicht' },
   },
 };
 
@@ -399,6 +455,14 @@ const PRESETS = {
     aggregate:  'sum',
     valueSuffix: '',
   },
+  // Not a bar preset: a text/number cost + consumption summary (ported from
+  // the standalone lutarym-electricity-overview-card). Rendered via its own
+  // path; the `mode` marker makes every bar-specific code path skip it.
+  overview: {
+    mode: 'overview',
+    entity: '',
+    color: '#0ea5e9',
+  },
 };
 
 const CARD_TYPE_KEYS = Object.keys(PRESETS);
@@ -453,6 +517,37 @@ class LutarymEnergyCard extends HTMLElement {
   setConfig(config) {
     const cardType = CARD_TYPE_KEYS.includes(config.card_type) ? config.card_type : 'energy';
     const preset = PRESETS[cardType];
+
+    // Overview mode: a completely separate config + render path. Store the
+    // overview-specific fields and skip all bar-chart wiring below.
+    if (preset.mode === 'overview') {
+      this._isOverview = true;
+      this._preset = preset;
+      const changed = !this._config
+        || this._config.card_type !== cardType
+        || this._config.energy_entity !== (config.energy_entity || config.entity || '')
+        || this._config.previous_year_kwh != config.previous_year_kwh;
+      this._config = {
+        card_type: cardType,
+        energy_entity: config.energy_entity || config.entity || '',
+        entity: config.energy_entity || config.entity || '', // so notConfigured checks pass
+        price_per_kwh: config.price_per_kwh,
+        base_fee_yearly: config.base_fee_yearly,
+        base_fee_monthly: config.base_fee_monthly,
+        base_fee_mode: config.base_fee_mode || 'accrued',
+        currency: config.currency || 'EUR',
+        show_forecast: config.show_forecast === true,
+        previous_year_kwh: config.previous_year_kwh,
+        title: config.title ?? presetInfo(this._hass, cardType).title,
+        titleFontSize: Number(config.title_font_size) || 14,
+        appearance: config.appearance ?? 'auto',
+      };
+      if (changed) { this._overviewData = null; this._lastFetch = 0; }
+      if (this._hass && this._config.energy_entity) this._fetchOverview();
+      this._render();
+      return;
+    }
+    this._isOverview = false;
     const info = presetInfo(this._hass, cardType);
 
     const newEntity = config.entity ?? preset.entity;
@@ -547,6 +642,13 @@ class LutarymEnergyCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    if (this._isOverview) {
+      if (this._config?.energy_entity && Date.now() - this._lastFetch > 15 * 60 * 1000) {
+        this._lastFetch = Date.now();
+        this._fetchOverview();
+      }
+      return;
+    }
     const ratioReady = !this._preset?.isRatio || !!this._config?.gridEntity;
     if (this._config?.entity && ratioReady && Date.now() - this._lastFetch > 3_600_000) {
       this._lastFetch = Date.now();
@@ -907,6 +1009,84 @@ class LutarymEnergyCard extends HTMLElement {
     });
   }
 
+  // ── Overview mode: yearly consumption from meter-reading differences ──
+  async _fetchOverview() {
+    if (!this._hass || !this._config?.energy_entity) return;
+    if (this._ovLoading) return;
+    this._ovLoading = true;
+
+    const entity = this._config.energy_entity;
+    const now    = new Date();
+    const year   = now.getFullYear();
+    const jan1Cur  = new Date(year,     0, 1, 0, 0, 0, 0);
+    const jan1Prev = new Date(year - 1, 0, 1, 0, 0, 0, 0);
+
+    try {
+      const result = await this._hass.callWS({
+        type:          'recorder/statistics_during_period',
+        start_time:    jan1Prev.toISOString(),
+        end_time:      now.toISOString(),
+        statistic_ids: [entity],
+        period:        'day',
+        types:         ['sum'],
+      });
+      const points = (result && result[entity]) ? result[entity] : [];
+
+      const lastSumBefore = (tMs) => {
+        let best = null;
+        for (const p of points) {
+          if (typeof p.sum !== 'number') continue;
+          const pt = new Date(p.start).getTime();
+          if (pt <= tMs && (best === null || pt > best.t)) best = { sum: p.sum, t: pt };
+        }
+        return best;
+      };
+      const lastSumStrictlyBefore = (tMs) => lastSumBefore(tMs - 1);
+
+      const latestPoint = lastSumBefore(now.getTime());
+      if (!latestPoint) {
+        this._overviewData = { error: t(this._hass, 'ovNoStatsYet') };
+        return;
+      }
+      const sumNow = latestPoint.sum;
+
+      const startCurPoint = lastSumStrictlyBefore(jan1Cur.getTime());
+      const sumStartCur   = startCurPoint ? startCurPoint.sum : 0;
+      const current       = sumNow - sumStartCur;
+      const partialYear   = !startCurPoint;
+
+      const startPrevPoint = lastSumStrictlyBefore(jan1Prev.getTime());
+      const endPrevPoint   = lastSumStrictlyBefore(jan1Cur.getTime());
+      let previous = null;
+      if (startPrevPoint && endPrevPoint && endPrevPoint.sum > startPrevPoint.sum) {
+        previous = endPrevPoint.sum - startPrevPoint.sum;
+      }
+      const manualPrev = (this._config.previous_year_kwh != null && this._config.previous_year_kwh !== '')
+        ? Number(this._config.previous_year_kwh) : null;
+
+      this._overviewData = { current: Math.max(0, current), previous: manualPrev ?? previous, partialYear };
+    } catch (e) {
+      this._overviewData = { error: t(this._hass, 'ovWsError', { msg: e.message }) };
+    } finally {
+      this._ovLoading = false;
+      this._render();
+    }
+  }
+
+  _yearFraction() {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), 0, 1);
+    const end   = new Date(now.getFullYear() + 1, 0, 1);
+    return (now - start) / (end - start);
+  }
+
+  _ovFmt(v, minD, maxD) {
+    return Number(v).toLocaleString(undefined, {
+      minimumFractionDigits: minD,
+      maximumFractionDigits: maxD ?? minD,
+    });
+  }
+
   async _fetchData() {
     this._loading = true;
     this._error   = null;
@@ -1183,6 +1363,103 @@ class LutarymEnergyCard extends HTMLElement {
   }
 
   // ── SVG chart ─────────────────────────────────────────────────────────
+
+  _renderOverview() {
+    const hass = this._hass;
+    const cfg  = this._config;
+    const data = this._overviewData;
+    const currency = cfg.currency || 'EUR';
+    const year = new Date().getFullYear();
+    const titleText = cfg.title || t(hass, 'ovDefaultTitle');
+
+    let inner;
+    if (!cfg.energy_entity) {
+      inner = `<div class="ov-hero">…</div><div class="ov-sub">${t(hass, 'notConfigured')}</div>`;
+    } else if (!data) {
+      inner = `<div class="ov-hero">…</div><div class="ov-sub">${t(hass, 'ovLoadingData')}</div>`;
+    } else if (data.error) {
+      inner = `<div class="ov-hero">!</div><div class="ov-sub">${data.error}</div>`;
+    } else {
+      const current  = data.current;
+      const previous = data.previous;
+      const price    = Number(cfg.price_per_kwh) || 0;
+      const fraction = this._yearFraction();
+
+      let baseFeeYearly = 0;
+      if      (cfg.base_fee_yearly  != null && cfg.base_fee_yearly  !== '') baseFeeYearly = Number(cfg.base_fee_yearly);
+      else if (cfg.base_fee_monthly != null && cfg.base_fee_monthly !== '') baseFeeYearly = Number(cfg.base_fee_monthly) * 12;
+      const baseFee    = (cfg.base_fee_mode === 'full') ? baseFeeYearly : baseFeeYearly * fraction;
+      const energyCost = current * price;
+      const totalCost  = energyCost + baseFee;
+
+      const rows = [];
+      rows.push(`<div class="ov-row"><span>${t(hass, 'ovEnergyLabel', { kwh: this._ovFmt(current,0,1), price: this._ovFmt(price,2,4), currency })}</span><span>${this._ovFmt(energyCost,2)} ${currency}</span></div>`);
+      if (baseFeeYearly > 0) {
+        const bl = (cfg.base_fee_mode === 'full') ? t(hass,'ovBaseFeeYear') : t(hass,'ovBaseFeeAccrued');
+        rows.push(`<div class="ov-row"><span>${bl}</span><span>${this._ovFmt(baseFee,2)} ${currency}</span></div>`);
+      }
+
+      let compareHtml = '';
+      if (previous !== null && previous > 0) {
+        const diff = current - previous;
+        const pct  = (diff / previous) * 100;
+        const less = diff < 0;
+        compareHtml = `<div class="ov-compare ${less ? 'down' : 'up'}">${less ? '▼' : '▲'} ${this._ovFmt(Math.abs(pct),1)} % ${less ? t(hass,'ovLess') : t(hass,'ovMore')} (${this._ovFmt(Math.abs(diff),0,1)} kWh)</div>`;
+      } else {
+        compareHtml = `<div class="ov-compare">${t(hass,'ovNoDataForYear',{ year: year-1 })}</div>`;
+      }
+      const prevText = (previous !== null && previous > 0) ? `${this._ovFmt(previous,0,1)} kWh` : '–';
+
+      const noteHtml = data.partialYear ? `<div class="ov-note">${t(hass,'ovPartialYearNote')}</div>` : '';
+      const forecastHtml = (cfg.show_forecast && fraction > 0)
+        ? `<div class="ov-forecast"><span>${t(hass,'ovForecastLabel')}</span><span>${this._ovFmt(current/fraction,0,1)} kWh</span></div>`
+        : '';
+
+      inner = `
+        <div class="ov-hero">${this._ovFmt(totalCost,2)} ${currency}</div>
+        <div class="ov-sub">${t(hass,'ovCostLabel',{ year })}</div>
+        <div class="ov-breakdown">${rows.join('')}</div>
+        <div class="ov-divider"></div>
+        <div class="ov-cons">
+          <div><div class="ov-collabel">${t(hass,'ovConsumptionLabel',{ year })}</div><div class="ov-consval">${this._ovFmt(current,0,1)} kWh</div></div>
+          <div class="ov-right"><div class="ov-collabel">${t(hass,'ovPreviousYearLabel',{ year: year-1 })}</div><div class="ov-consval sec">${prevText}</div></div>
+        </div>
+        ${compareHtml}
+        ${noteHtml}
+        ${forecastHtml}
+      `;
+    }
+
+    this.shadowRoot.innerHTML = `
+      <style>
+        :host { display:block; width:100%; height:100%; box-sizing:border-box; ${this._appearanceCSSVars()} }
+        ha-card { width:100%; height:100%; box-sizing:border-box; padding:16px 18px; }
+        .ov-title { font-size:${cfg.titleFontSize}px; font-weight:600; letter-spacing:.03em; text-transform:uppercase; color:var(--secondary-text-color); margin-bottom:14px; }
+        .ov-hero { font-size:2.4rem; font-weight:600; line-height:1.05; color:var(--primary-text-color); font-variant-numeric:tabular-nums; }
+        .ov-sub { font-size:.8rem; color:var(--secondary-text-color); margin-top:3px; }
+        .ov-breakdown { margin-top:14px; }
+        .ov-row { display:flex; justify-content:space-between; gap:12px; padding:3px 0; font-size:.9rem; }
+        .ov-row span:first-child { color:var(--secondary-text-color); }
+        .ov-row span:last-child { color:var(--primary-text-color); font-variant-numeric:tabular-nums; white-space:nowrap; }
+        .ov-divider { height:1px; background:var(--divider-color, rgba(128,128,128,.2)); margin:14px 0; }
+        .ov-cons { display:flex; justify-content:space-between; align-items:flex-end; gap:16px; }
+        .ov-right { text-align:right; }
+        .ov-collabel { font-size:.75rem; color:var(--secondary-text-color); margin-bottom:2px; }
+        .ov-consval { font-size:1.55rem; font-weight:600; color:var(--primary-text-color); font-variant-numeric:tabular-nums; line-height:1.1; }
+        .ov-consval.sec { font-size:1.05rem; font-weight:500; color:var(--secondary-text-color); }
+        .ov-compare { margin-top:8px; font-size:.9rem; font-weight:600; font-variant-numeric:tabular-nums; color:var(--secondary-text-color); }
+        .ov-compare.down { color:var(--success-color, #2e7d32); }
+        .ov-compare.up { color:var(--error-color, #c62828); }
+        .ov-note { font-size:.75rem; color:var(--secondary-text-color); margin-top:6px; font-style:italic; }
+        .ov-forecast { display:flex; justify-content:space-between; gap:12px; margin-top:12px; padding-top:12px; border-top:1px solid var(--divider-color, rgba(128,128,128,.2)); font-size:.85rem; }
+        .ov-forecast span:first-child { color:var(--secondary-text-color); }
+        .ov-forecast span:last-child { color:var(--primary-text-color); font-variant-numeric:tabular-nums; }
+      </style>
+      <ha-card>
+        <div class="ov-title">${titleText}</div>
+        ${inner}
+      </ha-card>`;
+  }
 
   _buildChart(currentMonth) {
     const lang = lutarymLang(this._hass);
@@ -1644,6 +1921,7 @@ class LutarymEnergyCard extends HTMLElement {
 
   _render() {
     if (!this._config) return;
+    if (this._isOverview) return this._renderOverview();
     const hass = this._hass;
 
     const now          = new Date();
@@ -2218,6 +2496,50 @@ class LutarymEnergyCardEditor extends HTMLElement {
       'card_type',
       this._cardType,
     ));
+
+    // Overview mode has its own small set of fields; render them and stop.
+    if (preset.mode === 'overview') {
+      form.appendChild(this._row(
+        t(hass, 'editorEnergyEntity'), null, { entity: {} },
+        'energy_entity', this._config.energy_entity,
+      ));
+      form.appendChild(this._row(
+        t(hass, 'editorTitle'),
+        t(hass, 'editorTitleHint', { title: info.title }),
+        { text: {} }, 'title', this._config.title,
+      ));
+      form.appendChild(this._numberRow(
+        t(hass, 'editorPrice'), t(hass, 'editorPriceHint'),
+        'price_per_kwh', this._config.price_per_kwh, 0, null, false, '0.32', 0.01, '',
+      ));
+      form.appendChild(this._sideBySide(
+        this._numberRow(t(hass, 'editorBaseFeeYearly'), null, 'base_fee_yearly',
+          this._config.base_fee_yearly, 0, null, false, 'z.B. 150', 0.01, ''),
+        this._numberRow(t(hass, 'editorBaseFeeMonthly'), null, 'base_fee_monthly',
+          this._config.base_fee_monthly, 0, null, false, 'z.B. 12.50', 0.01, ''),
+      ));
+      form.appendChild(this._row(
+        t(hass, 'editorBaseFeeMode'), null,
+        { select: { mode: 'dropdown', options: [
+          { value: 'accrued', label: t(hass, 'ovModeAccrued') },
+          { value: 'full',    label: t(hass, 'ovModeFull') },
+        ] } },
+        'base_fee_mode', this._config.base_fee_mode || 'accrued',
+      ));
+      form.appendChild(this._row(
+        t(hass, 'editorCurrency'), null, { text: {} },
+        'currency', this._config.currency || 'EUR',
+      ));
+      form.appendChild(this._numberRow(
+        t(hass, 'editorPreviousYear'), t(hass, 'editorPreviousYearHint'),
+        'previous_year_kwh', this._config.previous_year_kwh, 0, null, false, t(hass, 'autoLabel'), 1, '',
+      ));
+      form.appendChild(this._toggleRow(
+        t(hass, 'editorShowForecast'), null,
+        'show_forecast', this._config.show_forecast === true,
+      ));
+      return;
+    }
 
     form.appendChild(this._row(
       t(hass, 'editorEntity'),
