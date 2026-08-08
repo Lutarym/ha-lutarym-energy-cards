@@ -603,7 +603,7 @@ class LutarymEnergyCard extends HTMLElement {
         color: config.color ?? preset.color,
       };
       if (changed) { this._roomsData = null; this._lastFetch = 0; }
-      if (changed && this._hass && this._config.total_entity && this._config.rooms.length) this._fetchRooms();
+      if (changed && this._hass && this._config.total_entity) this._fetchRooms();
       this._render();
       return;
     }
@@ -710,7 +710,7 @@ class LutarymEnergyCard extends HTMLElement {
       return;
     }
     if (this._isRooms) {
-      if (this._config?.total_entity && this._config.rooms?.length
+      if (this._config?.total_entity
           && Date.now() - this._lastFetch > 15 * 60 * 1000) {
         this._lastFetch = Date.now();
         this._fetchRooms();
@@ -1147,6 +1147,7 @@ class LutarymEnergyCard extends HTMLElement {
 
   // ── Rooms mode: yearly kWh per room + total ──
   async _roomYearKwh(entity) {
+    if (!entity) return null;
     const now = new Date();
     const year = now.getFullYear();
     const result = await this._hass.callWS({
@@ -1165,15 +1166,16 @@ class LutarymEnergyCard extends HTMLElement {
   }
 
   async _fetchRooms() {
-    if (!this._hass || !this._config?.total_entity || !this._config.rooms?.length) return;
+    if (!this._hass || !this._config?.total_entity) return;
     if (this._roomsLoading) return;
     this._roomsLoading = true;
     try {
-      const entities = [this._config.total_entity, ...this._config.rooms.map(r => r.entity)];
+      const roomList = this._config.rooms || [];
+      const entities = [this._config.total_entity, ...roomList.map(r => r.entity)];
       const results  = await Promise.all(entities.map(e => this._roomYearKwh(e)));
       this._roomsData = {
         total: results[0],
-        rooms: this._config.rooms.map((r, i) => ({ name: r.name, kwh: results[i + 1] })),
+        rooms: roomList.map((r, i) => ({ name: r.name, kwh: results[i + 1] })),
       };
     } catch (e) {
       this._roomsData = { error: t(this._hass, 'rmWsError', { msg: e.message }) };
@@ -1577,7 +1579,7 @@ class LutarymEnergyCard extends HTMLElement {
     let rowsHtml = '';
     let otherHtml = '';
 
-    if (!cfg.total_entity || !cfg.rooms?.length) {
+    if (!cfg.total_entity) {
       rowsHtml = `<div class="rm-empty">${t(hass, 'notConfigured')}</div>`;
     } else if (data && data.error) {
       totalStr = '!';
@@ -1589,7 +1591,7 @@ class LutarymEnergyCard extends HTMLElement {
 
       // Pair each room with its config (for power_entity) and sort by yearly
       // consumption, largest first. Rooms without data (null) go last.
-      const paired = data.rooms.map((room, i) => ({ room, cfgRoom: cfg.rooms[i] || {} }));
+      const paired = (data.rooms || []).map((room, i) => ({ room, cfgRoom: cfg.rooms[i] || {} }));
       paired.sort((a, b) => (b.room.kwh ?? -1) - (a.room.kwh ?? -1));
 
       rowsHtml = paired.map(({ room, cfgRoom }) => {
@@ -1611,20 +1613,21 @@ class LutarymEnergyCard extends HTMLElement {
         </div>`;
       }).join('');
 
-      const roomSum = data.rooms.reduce((a, r) => a + (r.kwh ?? 0), 0);
-      const other = (total !== null) ? Math.max(0, total - roomSum) : null;
+      const roomSum = (data.rooms || []).reduce((a, r) => a + (r.kwh ?? 0), 0);
+      const hasRooms = !!(data.rooms && data.rooms.length);
+      const other = (total !== null && hasRooms) ? Math.max(0, total - roomSum) : null;
       let oKwh = '–', oPct = '–', oPctV = 0;
       if (other !== null && total && total > 0) {
         oPctV = (other / total) * 100; oKwh = fmt(other, 0, 1) + ' kWh'; oPct = fmt(oPctV, 1) + ' %';
       }
-      otherHtml = `<div class="rm-row rm-other">
+      otherHtml = hasRooms ? `<div class="rm-row rm-other">
         <div class="rm-namecell"><span class="rm-name">${t(hass, 'rmOtherLabel')}</span></div>
         <div class="rm-barwrap"><div class="rm-bar rm-otherbar" style="width:${Math.min(100, oPctV)}%"></div></div>
         <div class="rm-kwh">${oKwh}</div>
         <div class="rm-pct">${oPct}</div>
-      </div>`;
+      </div>` : '';
     } else {
-      rowsHtml = cfg.rooms.map(r => `<div class="rm-row"><div class="rm-namecell"><span class="rm-name">${r.name || ''}</span></div><div class="rm-barwrap"><div class="rm-bar"></div></div><div class="rm-kwh">…</div><div class="rm-pct"></div></div>`).join('');
+      rowsHtml = (cfg.rooms || []).map(r => `<div class="rm-row"><div class="rm-namecell"><span class="rm-name">${r.name || ''}</span></div><div class="rm-barwrap"><div class="rm-bar"></div></div><div class="rm-kwh">…</div><div class="rm-pct"></div></div>`).join('');
     }
 
     this.shadowRoot.innerHTML = `
@@ -2320,6 +2323,7 @@ class LutarymEnergyCardEditor extends HTMLElement {
     const typeChanged   = !firstLoad && config.card_type !== this._config.card_type;
 
     this._config = { ...config };
+    if (Array.isArray(config.rooms)) this._config.rooms = config.rooms.map(r => ({ ...r }));
 
     if (firstLoad || typeChanged) {
       this._render();
