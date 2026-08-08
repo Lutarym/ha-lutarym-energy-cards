@@ -603,7 +603,7 @@ class LutarymEnergyCard extends HTMLElement {
         color: config.color ?? preset.color,
       };
       if (changed) { this._roomsData = null; this._lastFetch = 0; }
-      if (this._hass && this._config.total_entity && this._config.rooms.length) this._fetchRooms();
+      if (changed && this._hass && this._config.total_entity && this._config.rooms.length) this._fetchRooms();
       this._render();
       return;
     }
@@ -2394,10 +2394,14 @@ class LutarymEnergyCardEditor extends HTMLElement {
 
   // ── Rooms editor helpers ──
   _rmEnsure() { if (!Array.isArray(this._config.rooms)) this._config.rooms = []; }
-  _rmTotalChange(v) { if (v) this._config.total_entity = v; else delete this._config.total_entity; this._fireChanged(); }
-  _rmRoomChange(i, field, v) { this._rmEnsure(); this._config.rooms[i][field] = v; this._fireChanged(); }
-  _rmAddRoom() { this._rmEnsure(); if (this._config.rooms.length >= 10) return; this._config.rooms.push({ name: '', entity: '' }); this._render(); this._fireChanged(); }
-  _rmRemoveRoom(i) { this._rmEnsure(); this._config.rooms.splice(i, 1); this._render(); this._fireChanged(); }
+  // Rebuild config with fresh array + object references before emitting, so
+  // Home Assistant reliably detects the change (an in-place mutation of the
+  // same array reference can be ignored by HA's change detection).
+  _rmClone() { this._config = { ...this._config, rooms: (this._config.rooms || []).map(r => ({ ...r })) }; }
+  _rmTotalChange(v) { if (v) this._config.total_entity = v; else delete this._config.total_entity; this._rmClone(); this._fireChanged(); }
+  _rmRoomChange(i, field, v) { this._rmEnsure(); this._config.rooms[i][field] = v; this._rmClone(); this._fireChanged(); }
+  _rmAddRoom() { this._rmEnsure(); if (this._config.rooms.length >= 10) return; this._config.rooms.push({ name: '', entity: '' }); this._rmClone(); this._render(); this._fireChanged(); }
+  _rmRemoveRoom(i) { this._rmEnsure(); this._config.rooms.splice(i, 1); this._rmClone(); this._render(); this._fireChanged(); }
 
   _renderRoomsEditor(form, hass) {
     this._rmEnsure();
