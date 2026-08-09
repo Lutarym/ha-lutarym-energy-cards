@@ -1683,13 +1683,13 @@ class LutarymEnergyCard extends HTMLElement {
         ha-card { width:100%; height:100%; box-sizing:border-box; padding:16px 18px; }
         .rm-title { font-size:${cfg.titleFontSize}px; font-weight:600; letter-spacing:.03em; text-transform:uppercase; color:var(--secondary-text-color); margin-bottom:14px; }
         .rm-totlabel { font-size:.78rem; color:var(--secondary-text-color); margin-bottom:2px; }
-        .rm-totval { font-size:2.2rem; font-weight:600; line-height:1.05; color:var(--primary-text-color); font-variant-numeric:tabular-nums; }
+        .rm-totval { font-size:1.7rem; font-weight:600; line-height:1.05; color:var(--primary-text-color); font-variant-numeric:tabular-nums; white-space:nowrap; }
         .rm-totunit { font-size:.8rem; color:var(--secondary-text-color); margin-left:4px; }
         .rm-divider { height:1px; background:var(--divider-color, rgba(128,128,128,.2)); margin:14px 0; }
         .rm-head { display:flex; gap:18px; align-items:flex-end; flex-wrap:wrap; }
         .rm-headcell { display:flex; flex-direction:column; }
-        .rm-headval { font-size:1.4rem; font-weight:600; color:var(--primary-text-color); font-variant-numeric:tabular-nums; line-height:1.05; }
-        .rm-headval-main { font-size:2.2rem; }
+        .rm-headval { font-size:1.2rem; font-weight:600; color:var(--primary-text-color); font-variant-numeric:tabular-nums; line-height:1.05; white-space:nowrap; }
+        .rm-headval-main { font-size:1.7rem; }
         .rm-row { display:grid; grid-template-columns:1fr 1fr auto auto; align-items:center; gap:8px; padding:5px 0; border-bottom:1px solid var(--divider-color, rgba(128,128,128,.1)); }
         .rm-row:last-child { border-bottom:none; }
         .rm-namecell { display:flex; flex-direction:column; gap:1px; overflow:hidden; }
