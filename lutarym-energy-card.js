@@ -75,7 +75,7 @@ const I18N = {
     rmRemoveLabel: 'Remove',
     rmNameLabel: 'Name',
     rmNamePlaceholder: 'e.g. Living Room',
-    rmEntityLabel: 'Entity',
+    rmEntityLabel: 'Room electricity meter (kWh)',
     rmPowerEntityLabel: 'Live power entity (optional)',
     rmAddRoomLabel: '+ Add room',
     ovDefaultTitle: 'Electricity Overview',
@@ -92,7 +92,7 @@ const I18N = {
     ovLess: 'less',
     ovMore: 'more',
     ovNoDataForYear: 'No data for {year}',
-    editorEnergyEntity: 'Energy entity (required)',
+    editorEnergyEntity: 'Electricity meter (kWh, required)',
     editorPrice: 'Price per kWh in EUR (required)',
     editorPriceHint: 'e.g. 0.32 for 32 ct/kWh (EUR per kWh).',
     editorBaseFeeYearly: 'Yearly base fee',
@@ -167,7 +167,7 @@ const I18N = {
     autoLabel: 'Automatic',
     loading: 'Loading data…',
     notConfigured: 'Select an entity in the card editor to get started.',
-    notConfiguredRatio: 'Select the grid entity (power or energy) in the card editor to get started.',
+    notConfiguredRatio: 'Also select "{field}" in the card editor to get started.',
     error: 'Error: {msg}',
     unknownError: 'Unknown error',
   },
@@ -191,7 +191,7 @@ const I18N = {
     rmRemoveLabel: 'Entfernen',
     rmNameLabel: 'Name',
     rmNamePlaceholder: 'z.B. Wohnzimmer',
-    rmEntityLabel: 'Entity',
+    rmEntityLabel: 'Stromzähler des Raums (kWh)',
     rmPowerEntityLabel: 'Live-Leistung-Entity (optional)',
     rmAddRoomLabel: '+ Raum hinzufügen',
     ovDefaultTitle: 'Stromübersicht',
@@ -208,7 +208,7 @@ const I18N = {
     ovLess: 'weniger',
     ovMore: 'mehr',
     ovNoDataForYear: 'Keine Daten für {year}',
-    editorEnergyEntity: 'Energie-Entity (Pflicht)',
+    editorEnergyEntity: 'Stromverbrauch-Zähler (kWh, Pflicht)',
     editorPrice: 'Preis pro kWh in EUR (Pflicht)',
     editorPriceHint: 'z. B. 0.32 für 32 ct/kWh (Euro pro kWh).',
     editorBaseFeeYearly: 'Grundgebühr jährlich',
@@ -283,7 +283,7 @@ const I18N = {
     autoLabel: 'Automatisch',
     loading: 'Lade Daten…',
     notConfigured: 'Wähle im Karten-Editor eine Entity aus, um zu starten.',
-    notConfiguredRatio: 'Wähle im Karten-Editor die Netz-Entity (Leistung oder Energie) aus, um zu starten.',
+    notConfiguredRatio: 'Wähle im Karten-Editor zusätzlich "{field}" aus, um zu starten.',
     error: 'Fehler: {msg}',
     unknownError: 'Unbekannter Fehler',
   },
@@ -293,32 +293,32 @@ const I18N = {
 // (below) so the preset data itself stays language-independent.
 const PRESET_I18N = {
   en: {
-    autarkie: { label: 'Self-Sufficiency', title: 'Self-Sufficiency' },
-    energy:   { label: 'Power Consumption', title: 'Power Consumption' },
-    pv:       { label: 'PV Yield', title: 'PV Yield' },
-    wallbox:  { label: 'Wallbox', title: 'Wallbox' },
-    wallbox_eff: { label: 'Wallbox Charging Efficiency', title: 'Wallbox Charging Efficiency' },
-    eigenverbrauch: { label: 'Self-Consumption', title: 'Self-Consumption' },
-    cop: { label: 'Heat Pump COP', title: 'Heat Pump COP' },
-    wp:       { label: 'Heat Pump', title: 'Heat Pump' },
-    klima:    { label: 'Air Conditioning', title: 'Air Conditioning' },
-    akku:     { label: 'Battery State of Charge', title: 'Battery State of Charge' },
-    einspeisung: { label: 'Grid Feed-in', title: 'Grid Feed-in' },
+    autarkie: { label: 'Self-Sufficiency', title: 'Self-Sufficiency', entityDesc: 'Self-sufficiency sensor (%)' },
+    energy:   { label: 'Power Consumption', title: 'Power Consumption', entityDesc: 'Power consumption meter (kWh)' },
+    pv:       { label: 'PV Yield', title: 'PV Yield', entityDesc: 'PV yield meter (kWh)' },
+    wallbox:  { label: 'Wallbox', title: 'Wallbox', entityDesc: 'Wallbox charging energy meter (kWh)' },
+    wallbox_eff: { label: 'Wallbox Charging Efficiency', title: 'Wallbox Charging Efficiency', entityDesc: 'Wallbox charging energy meter (kWh)' },
+    eigenverbrauch: { label: 'Self-Consumption', title: 'Self-Consumption', entityDesc: 'PV yield meter (kWh)' },
+    cop: { label: 'Heat Pump COP', title: 'Heat Pump COP', entityDesc: 'Heat pump electricity meter (kWh)' },
+    wp:       { label: 'Heat Pump', title: 'Heat Pump', entityDesc: 'Heat pump electricity meter (kWh)' },
+    klima:    { label: 'Air Conditioning', title: 'Air Conditioning', entityDesc: 'Air conditioning electricity meter (kWh)' },
+    akku:     { label: 'Battery State of Charge', title: 'Battery State of Charge', entityDesc: 'Battery charge sensor (%)' },
+    einspeisung: { label: 'Grid Feed-in', title: 'Grid Feed-in', entityDesc: 'Grid feed-in meter (kWh)' },
     overview: { label: 'Electricity Overview', title: 'Electricity Overview' },
     rooms: { label: 'Room Energy', title: 'Room Energy Consumption' },
   },
   de: {
-    autarkie: { label: 'Autarkie', title: 'Autarkie' },
-    energy:   { label: 'Stromverbrauch', title: 'Stromverbrauch' },
-    pv:       { label: 'PV Ertrag', title: 'PV Ertrag' },
-    wallbox:  { label: 'Wallbox', title: 'Wallbox' },
-    wallbox_eff: { label: 'Wallbox Ladeeffizienz', title: 'Wallbox Ladeeffizienz' },
-    eigenverbrauch: { label: 'Eigenverbrauchsquote', title: 'Eigenverbrauchsquote' },
-    cop: { label: 'Wärmepumpe COP', title: 'Wärmepumpe COP' },
-    wp:       { label: 'Wärmepumpe', title: 'Wärmepumpe' },
-    klima:    { label: 'Klimaanlage', title: 'Klimaanlage' },
-    akku:     { label: 'Akku-Ladezustand', title: 'Akku-Ladezustand' },
-    einspeisung: { label: 'Netzeinspeisung', title: 'PV Netz-Einspeisung' },
+    autarkie: { label: 'Autarkie', title: 'Autarkie', entityDesc: 'Autarkiegrad-Sensor (%)' },
+    energy:   { label: 'Stromverbrauch', title: 'Stromverbrauch', entityDesc: 'Stromverbrauch-Zähler (kWh)' },
+    pv:       { label: 'PV Ertrag', title: 'PV Ertrag', entityDesc: 'PV-Ertrag-Zähler (kWh)' },
+    wallbox:  { label: 'Wallbox', title: 'Wallbox', entityDesc: 'Wallbox-Ladeenergie-Zähler (kWh)' },
+    wallbox_eff: { label: 'Wallbox Ladeeffizienz', title: 'Wallbox Ladeeffizienz', entityDesc: 'Wallbox-Ladeenergie-Zähler (kWh)' },
+    eigenverbrauch: { label: 'Eigenverbrauchsquote', title: 'Eigenverbrauchsquote', entityDesc: 'PV-Ertrag-Zähler (kWh)' },
+    cop: { label: 'Wärmepumpe COP', title: 'Wärmepumpe COP', entityDesc: 'Stromzähler Wärmepumpe (kWh)' },
+    wp:       { label: 'Wärmepumpe', title: 'Wärmepumpe', entityDesc: 'Stromzähler Wärmepumpe (kWh)' },
+    klima:    { label: 'Klimaanlage', title: 'Klimaanlage', entityDesc: 'Stromzähler Klimaanlage (kWh)' },
+    akku:     { label: 'Akku-Ladezustand', title: 'Akku-Ladezustand', entityDesc: 'Akku-Ladezustand-Sensor (%)' },
+    einspeisung: { label: 'Netzeinspeisung', title: 'PV Netz-Einspeisung', entityDesc: 'Netzeinspeisung-Zähler (kWh)' },
     overview: { label: 'Stromübersicht', title: 'Stromübersicht' },
     rooms: { label: 'Raum-Energie', title: 'Stromverbrauch Räume' },
   },
@@ -2192,7 +2192,9 @@ class LutarymEnergyCard extends HTMLElement {
     if (!this._config.entity) {
       body = `<div class="loading">${t(hass, 'notConfigured')}</div>`;
     } else if (ratioMissingNumerator) {
-      body = `<div class="loading">${t(hass, 'notConfiguredRatio')}</div>`;
+      const secondLabelKey = { grid_entity: 'editorGridEntity', feedin_entity: 'editorFeedinEntity', heat_entity: 'editorHeatEntity' }[this._preset.secondKey];
+      const fieldName = secondLabelKey ? t(hass, secondLabelKey) : t(hass, 'editorEntity');
+      body = `<div class="loading">${t(hass, 'notConfiguredRatio', { field: fieldName })}</div>`;
     } else if (this._loading) {
       body = `<div class="loading">${t(hass, 'loading')}</div>`;
     } else if (this._error) {
@@ -2912,7 +2914,7 @@ class LutarymEnergyCardEditor extends HTMLElement {
     }
 
     form.appendChild(this._row(
-      t(hass, 'editorEntity'),
+      info.entityDesc || t(hass, 'editorEntity'),
       preset.entity
         ? t(hass, 'editorEntityHint', { preset: info.label, entity: preset.entity })
         : t(hass, 'editorEntityRequiredHint'),
