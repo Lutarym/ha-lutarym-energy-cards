@@ -365,7 +365,7 @@ const PRESETS = {
   },
   energy: {
     entity:     'sensor.stromverbrauch',
-    color:      '#00b4d8',
+    color:      '#facc15',
     colorPrev:  '#888888',
     unit:       'kWh',
     statType:   'change',
@@ -407,7 +407,7 @@ const PRESETS = {
   // No grid draw ⇒ 100 %. All conversion happens in the card; no template.
   wallbox_eff: {
     entity:     '',
-    color:      '#06b6d4',
+    color:      '#6366f1',
     colorPrev:  '#888888',
     unit:       '%',
     statType:   'change',
@@ -424,7 +424,7 @@ const PRESETS = {
   // plain monthly ratio is exact — no per-hour split needed.
   eigenverbrauch: {
     entity:     '',
-    color:      '#f59e0b',
+    color:      '#84cc16',
     colorPrev:  '#888888',
     unit:       '%',
     statType:   'change',
@@ -441,7 +441,7 @@ const PRESETS = {
   // Auto-scaled axis; needs a real thermal-energy sensor to be meaningful.
   cop: {
     entity:     '',
-    color:      '#a855f7',
+    color:      '#d946ef',
     colorPrev:  '#888888',
     unit:       '',
     statType:   'change',
@@ -476,7 +476,7 @@ const PRESETS = {
   },
   akku: {
     entity:     'sensor.akku_ladezustand',
-    color:      '#a855f7',
+    color:      '#8b5cf6',
     colorPrev:  '#888888',
     unit:       '%',
     statType:   'mean',      // default display mode ('mean'); 'minmax' selectable in the editor
@@ -508,7 +508,7 @@ const PRESETS = {
   rooms: {
     mode: 'rooms',
     entity: '',
-    color: '#03a9f4',
+    color: '#10b981',
   },
 };
 
