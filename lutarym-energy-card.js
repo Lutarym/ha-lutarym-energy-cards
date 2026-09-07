@@ -1121,6 +1121,7 @@ class LutarymEnergyCard extends HTMLElement {
         statistic_ids: [entity],
         period:        'day',
         types:         ['sum'],
+        units:         { energy: 'kWh' }, // sonst rechnet ein Wh-/MWh-Zaehler die Kosten um Faktor 1000 falsch
       });
       const points = (result && result[entity]) ? result[entity] : [];
 
@@ -1179,7 +1180,9 @@ class LutarymEnergyCard extends HTMLElement {
       units:         { energy: 'kWh' },
       types:         ['change'],
     });
-    const points = result?.[entity] ?? [];
+    // Nur Punkte des abgefragten Jahres: die end_time-Grenze der Recorder-API
+    // kann den Januar-Eintrag des FOLGEJAHRS mitliefern (siehe _fetchYear).
+    const points = (result?.[entity] ?? []).filter(p => new Date(p.start).getFullYear() === year);
     if (points.length === 0) return null;
     const total = points.reduce((acc, p) => acc + (typeof p.change === 'number' && p.change >= 0 ? p.change : 0), 0);
     return total > 0 ? total : null;
@@ -2476,11 +2479,11 @@ class LutarymEnergyCardEditor extends HTMLElement {
     ));
     form.appendChild(this._row(
       t(hass, 'rmEditorPvEntity'), t(hass, 'rmEditorPvHint'), { entity: {} },
-      'pv_entity', cfg.pvEntity,
+      'pv_entity', cfg.pv_entity,
     ));
     form.appendChild(this._row(
       t(hass, 'rmEditorFeedinEntity'), null, { entity: {} },
-      'feedin_entity', cfg.feedinEntity,
+      'feedin_entity', cfg.feedin_entity,
     ));
     // Title
     form.appendChild(this._row(
